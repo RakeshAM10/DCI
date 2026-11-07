@@ -93,3 +93,20 @@ python -m pytest -q
 In the Action, `.dci.toml` is read from the base branch as committed there. If a PR adds, changes or deletes it, DCI warns and the change applies after merge. The `fail-on`, `rolling-deploy` and other inputs live in the workflow file, so protect that file (CODEOWNERS / branch protection) as well. In the CLI, consumer repositories named in `.dci.toml` must be inside the repository's parent directory unless `--allow-outside-config-paths` is given (`--consumer` flags are never restricted; `--workspace` is stricter).
 
 Recommended hardening: leave `fail-on` and `rolling-deploy` unset in the workflow and keep them in `.dci.toml` (read from the base branch), and require review of `.github/workflows/` and `.dci.toml` with CODEOWNERS (`examples/CODEOWNERS`) plus branch protection. A PR can edit an input that is written in the workflow file.
+
+
+## Optional AI assistance (advisory)
+
+`ai-assist: true` (Action) or `--ai` (CLI) adds a verdict hint, a short explanation and a suggested fix to findings, using the Anthropic API. It is off by default.
+
+- It can never change a finding's severity or confidence or the pass/fail result. Only the deterministic engine decides what blocks.
+- Privacy: only code lines around each piece of evidence are sent, after the same redaction as reports (secrets, credentials in URLs, SQL literals), for at most `ai-max-findings` findings (default 5). Nothing is sent without an API key.
+- Trust: a "likely breaks / likely safe" answer is kept only if a quote it cites really appears next to the cited line in the code that was sent; otherwise the answer is discarded. Answers are plain text only (no links, HTML or mentions).
+- Failures (network, API errors, bad answers) become a coverage note and never fail the check. Fork pull requests get no secrets, so AI assistance is skipped there.
+
+```yaml
+- uses: YOUR-ORG/dci@<sha>
+  with:
+    ai-assist: "true"
+    ai-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+```

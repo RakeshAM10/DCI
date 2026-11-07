@@ -6,6 +6,7 @@ import os
 import sys
 
 from . import __version__, report
+from . import ai as ai_mod
 from .analyze import analyze
 from .config import Config, ConfigError, load_file
 from .gitutil import GitError
@@ -30,6 +31,9 @@ def _parser() -> argparse.ArgumentParser:
     a.add_argument("--fail-on", choices=["error", "warning", "never"], help="severity at which CONFIRMED findings fail the run")
     a.add_argument("--no-rolling-deploy", action="store_true", help="do not treat old-version/new-schema overlap as an error")
     a.add_argument("--ignore-rule", action="append", default=[], help="suppress a rule id (repeatable)")
+    a.add_argument("--ai", action="store_true", help="add advisory AI notes to findings (needs ANTHROPIC_API_KEY; sends redacted code excerpts to the API)")
+    a.add_argument("--ai-model", help="model name for --ai")
+    a.add_argument("--ai-max-findings", type=int, default=5, help="max findings analysed by --ai (1-20)")
     a.add_argument("--github-comment", action="store_true", help="post/update the report as a PR comment (needs GITHUB_TOKEN)")
     return p
 
@@ -70,6 +74,20 @@ def main(argv: list[str] | None = None) -> int:
             raise
         print(f"dci: internal error: {e.__class__.__name__}: {e}", file=sys.stderr)
         return 3
+
+    if ns.ai:
+        key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+        try:
+            ai_cfg = ai_mod.AiConfig(api_key=key, model=ns.ai_model or ai_mod.DEFAULT_MODEL, max_findings=ns.ai_max_findings,
+                                     base_url=os.environ.get("ANTHROPIC_BASE_URL", "").strip() or ai_mod.DEFAULT_BASE_URL)
+        except ai_mod.AiError as e:
+            print(f"dci: error: {e}", file=sys.stderr)
+            return 2
+        roots = {"head": cfg.repo, **{f"consumer:{n}": p for n, p in [*cfg.consumer_repos, *cfg.config_consumer_repos]}}
+        try:
+            ai_mod.enhance(rep, roots, ai_cfg)
+        except Exception as e:  # noqa: BLE001 - advisory only
+            print(f"dci: warning: AI assistance failed: {e.__class__.__name__}", file=sys.stderr)
 
     rendered = {"text": report.to_text, "markdown": report.to_markdown, "json": report.to_json, "sarif": report.to_sarif}[ns.format](rep)
     if ns.output:

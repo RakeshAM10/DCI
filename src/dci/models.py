@@ -99,6 +99,17 @@ class Reference:
 
 
 @dataclass
+class AiNote:
+    """Advisory, model-written analysis of a finding. It never changes severity, confidence or the pass/fail result."""
+
+    verdict: str  # likely_breaks | likely_safe | unclear
+    summary: str
+    suggested_fix: str = ""
+    citations: list[dict] = field(default_factory=list)  # verified {file, line, quote}
+    model: str = ""
+
+
+@dataclass
 class Finding:
     rule_id: str
     severity: Severity
@@ -111,6 +122,7 @@ class Finding:
     total_evidence: int = 0
     file: str = ""
     line: int = 0
+    ai: AiNote | None = None
 
 
 @dataclass

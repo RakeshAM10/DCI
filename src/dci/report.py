@@ -7,6 +7,7 @@ from dataclasses import asdict
 from .models import Confidence, Finding, Report, Severity
 
 MARKER = "<!-- dci-report -->"
+_AI_LABEL = {"likely_breaks": "Likely breaks", "likely_safe": "Likely safe", "unclear": "Unclear"}
 MAX_COMMENT = 60_000
 
 
@@ -75,6 +76,13 @@ def to_markdown(r: Report, for_comment: bool = False) -> str:
             else:
                 f_lines.append("Suggested safe sequence:")
                 f_lines.extend(f"{i}. {s}" for i, s in enumerate(f.recommendation, 1))
+        if f.ai:
+            f_lines.append("")
+            f_lines.append(f"**AI-assisted analysis** (advisory, does not change the result; model `{f.ai.model}`): "
+                           f"**{_AI_LABEL.get(f.ai.verdict, f.ai.verdict)}**. {f.ai.summary}")
+            f_lines.extend(f"- cited `{c['file']}:{c['line']}`: `{c['quote']}`" for c in f.ai.citations)
+            if f.ai.suggested_fix:
+                f_lines.append(f"AI-suggested fix: {f.ai.suggested_fix}")
         f_lines.append("")
         return f_lines
 
@@ -122,6 +130,12 @@ def to_text(r: Report) -> str:
             out.append(f"    ... {f.total_evidence} total")
         for i, s in enumerate(f.recommendation, 1):
             out.append(f"  {i}. {s}")
+        if f.ai:
+            out.append(f"  AI (advisory): {_AI_LABEL.get(f.ai.verdict, f.ai.verdict)}. {f.ai.summary}")
+            for c in f.ai.citations:
+                out.append(f"    cited {c['file']}:{c['line']}: {c['quote']}")
+            if f.ai.suggested_fix:
+                out.append(f"    AI-suggested fix: {f.ai.suggested_fix}")
     for n in r.coverage.notes:
         out.append(f"\nnote: {n}")
     return "\n".join(out)
@@ -155,6 +169,8 @@ def to_sarif(r: Report) -> str:
             "message": {"text": f"{f.message} [confidence: {f.confidence.value}]"},
             "properties": {"confidence": f.confidence.value, "evidenceCount": f.total_evidence},
         }
+        if f.ai:
+            res["properties"]["aiAdvisory"] = {"verdict": f.ai.verdict, "summary": f.ai.summary, "suggestedFix": f.ai.suggested_fix}
         if f.file:
             res["locations"] = [{"physicalLocation": {"artifactLocation": {"uri": f.file}, "region": {"startLine": max(1, f.line)}}}]
         rel = [e for e in f.evidence if e.tree == "head"]

@@ -12,6 +12,7 @@ import tempfile
 
 from . import __version__, gitutil, report
 from .analyze import analyze
+from . import ai as ai_mod
 from .config import Config, ConfigError, load_file, load_text
 from .gitutil import GitError
 from .github import GitHubError, upsert_comment
@@ -125,6 +126,25 @@ def main() -> int:
         return 3
 
 
+def _run_ai(rep, cfg: Config, repo: str) -> None:
+    """Optional, advisory, and never able to fail the check: any problem becomes a notice."""
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not key:
+        print("::notice title=DCI AI assistance skipped::No API key available (secrets are not passed to fork pull requests).")
+        return
+    try:
+        mf = _in("ai-max-findings")
+        ai_cfg = ai_mod.AiConfig(api_key=key, model=_in("ai-model") or ai_mod.DEFAULT_MODEL,
+                                 base_url=os.environ.get("ANTHROPIC_BASE_URL", "").strip() or ai_mod.DEFAULT_BASE_URL,
+                                 max_findings=int(mf) if mf else 5)
+        roots = {"head": repo, **{f"consumer:{n}": p for n, p in [*cfg.consumer_repos, *cfg.config_consumer_repos]}}
+        ai_mod.enhance(rep, roots, ai_cfg)
+    except (ai_mod.AiError, ValueError) as e:
+        print(f"::warning title=DCI AI assistance skipped::{escape_data(str(e))}")
+    except Exception as e:  # noqa: BLE001 - advisory feature must never break the check
+        print(f"::warning title=DCI AI assistance failed::{escape_data(e.__class__.__name__)}")
+
+
 def _run() -> int:
     workspace = os.path.realpath(os.environ.get("GITHUB_WORKSPACE") or os.getcwd())
     base_ref = _in("base-ref") or os.environ.get("GITHUB_BASE_REF", "").strip()
@@ -180,6 +200,8 @@ def _run() -> int:
 
     rep = analyze(cfg)
     rep.coverage.notes.extend(config_notes)
+    if _bool("ai-assist", False):
+        _run_ai(rep, cfg, repo)
 
     out_dir = os.path.join(os.environ.get("RUNNER_TEMP") or tempfile.gettempdir(), "dci")
     os.makedirs(out_dir, exist_ok=True)
