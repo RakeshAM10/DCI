@@ -47,22 +47,48 @@ def to_markdown(r: Report, for_comment: bool = False) -> str:
         out.append("No schema-changing operations were found in the analysed migrations.")
     order = {Severity.ERROR: 0, Severity.WARNING: 1, Severity.INFO: 2}
     conf = {Confidence.CONFIRMED: 0, Confidence.POSSIBLE: 1, Confidence.UNKNOWN: 2}
-    for f in sorted(r.findings, key=lambda f: (order[f.severity], conf[f.confidence], f.file, f.line, f.rule_id)):
+    sorted_findings = sorted(r.findings, key=lambda f: (order[f.severity], conf[f.confidence], f.file, f.line, f.rule_id))
+
+    confirmed = [f for f in sorted_findings if f.confidence == Confidence.CONFIRMED]
+    advisory = [f for f in sorted_findings if f.confidence != Confidence.CONFIRMED]
+
+    def _render_finding(f: Finding, compact: bool = False) -> list[str]:
+        f_lines = []
         tag = f"{f.severity.value.upper()} · {f.confidence.value.upper()}"
-        out.append(f"### [{f.rule_id}] {f.title} — {tag}")
+        f_lines.append(f"### [{f.rule_id}] {f.title} — {tag}")
         what = f"{f.change.describe()}" if f.change else ""
-        out.append(f"{_loc(f)} {what}".strip())
-        out.append("")
-        out.append(f.message)
+        loc = _loc(f)
+        if loc or what:
+            f_lines.append(f"{loc} {what}".strip())
+            f_lines.append("")
+        f_lines.append(f.message)
         if f.evidence:
-            out.append("")
-            out.append(f"Evidence ({len(f.evidence)} of {f.total_evidence} shown):")
-            out.extend(_evidence_line(e) for e in f.evidence)
+            f_lines.append("")
+            f_lines.append(f"**Evidence ({len(f.evidence)} of {f.total_evidence} shown):**")
+            f_lines.extend(_evidence_line(e) for e in f.evidence)
         if f.recommendation:
-            out.append("")
-            out.append("Suggested safe sequence:")
-            out.extend(f"{i}. {s}" for i, s in enumerate(f.recommendation, 1))
-        out.append("")
+            f_lines.append("")
+            if compact:
+                f_lines.append("<details><summary><b>🛠️ Suggested safe sequence (expand & contract)</b></summary>\n")
+                f_lines.extend(f"{i}. {s}" for i, s in enumerate(f.recommendation, 1))
+                f_lines.append("\n</details>")
+            else:
+                f_lines.append("Suggested safe sequence:")
+                f_lines.extend(f"{i}. {s}" for i, s in enumerate(f.recommendation, 1))
+        f_lines.append("")
+        return f_lines
+
+    if for_comment and advisory and confirmed:
+        for f in confirmed:
+            out.extend(_render_finding(f, compact=True))
+        out.append(f"<details><summary><b>⚠️ Advisory findings ({len(advisory)} non-blocking: {sum(1 for f in advisory if f.severity == Severity.WARNING)} warning, {sum(1 for f in advisory if f.severity == Severity.INFO)} info)</b></summary>\n")
+        for f in advisory:
+            out.extend(_render_finding(f, compact=True))
+        out.append("</details>\n")
+    else:
+        for f in sorted_findings:
+            out.extend(_render_finding(f, compact=for_comment))
+
     cov = r.coverage
     out.append("<details><summary>Coverage and limits</summary>\n")
     out.append(f"- Source trees scanned: {', '.join(cov.trees_scanned) or 'none'}")
