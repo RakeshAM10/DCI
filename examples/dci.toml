@@ -1,0 +1,8 @@
+# Optional: place as .dci.toml in the repository root.
+migration_globs = ["**/versions/*.py", "**/migrations/**/*.sql"]
+test_globs      = ["**/tests/**", "**/test_*.py", "**/*_test.py", "**/conftest.py"]
+ignore_paths    = ["**/generated/**"]
+ignore_rules    = []            # e.g. ["DCI501"]; suppressions are listed in every report
+fail_on         = "error"       # error | warning | never. Only CONFIRMED findings can fail.
+rolling_deploy  = true          # old app versions run against the new schema during deploys
+max_evidence    = 25

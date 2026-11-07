@@ -1,0 +1,2 @@
+# Exact runtime dependency versions used by the GitHub Action (reproducible installs).
+sqlglot==30.29.0

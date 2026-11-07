@@ -1,0 +1,3 @@
+# Require review from the people who own the safety check before a PR can change how it runs.
+/.github/workflows/  @YOUR-ORG/platform-team
+/.dci.toml           @YOUR-ORG/platform-team

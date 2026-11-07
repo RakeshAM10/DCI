@@ -1,0 +1,27 @@
+# Several services share one database: check out the other consumers and tell DCI where they are.
+name: DCI database change check (multi-repo)
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  dci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: YOUR-ORG/billing-service
+          path: consumers/billing
+          token: ${{ secrets.READ_ONLY_CONSUMER_TOKEN }}   # fine-grained token, Contents: read, only these repos
+          persist-credentials: false
+      - uses: YOUR-ORG/dci@v1
+        with:
+          consumer-repos: |
+            billing=consumers/billing

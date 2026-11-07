@@ -1,0 +1,437 @@
+SOFTWARE CHANGE INTELLIGENCE  |  STRATEGY & FEASIBILITY REPORT
+
+**SOFTWARE CHANGE**
+**INTELLIGENCE**
+
+Full Competitor, Product, Technical Feasibility & Startup Strategy Report
+
+**Primary benchmarks: PlayerZero and Datadog**
+
+Prepared: 4 November 2026
+Purpose: Decide what to build, where to compete, and how to validate a defensible opportunity.
+
+# Executive summary
+
+The proposed product is a software intelligence platform that connects source code, service architecture, database schemas, deployment history and runtime telemetry. Its purpose is to explain the likely consequences of a software change before release, then verify what actually happened after deployment.
+
+The market is already active. PlayerZero's Sim-1 targets software behaviour simulation and scenario-based verification. Datadog combines observability with AI agents for investigation, code assistance, release validation and other operational workflows. Arcan, CodeScene, Qodo, Greptile, Launchable and database migration tools cover adjacent parts of the workflow.
+
+| **Strategic conclusion** Do not build a broad 'AI platform that understands all software'. That is too large, expensive and directly overlaps with funded competitors. Investigate a narrow, high-cost problem: cross-service database migration compatibility during rolling deployments, using static code analysis plus runtime query evidence. Treat this as a hypothesis to validate, not a proven market gap. |
+| --- |
+
+The first product should not claim to predict every production failure. It should answer a narrower, testable question: 'If this database schema change is deployed while old and new versions of services coexist, which known consumers can break, what evidence supports that conclusion, and what safe migration sequence should be used?'
+
+| **Decision area** | **Recommendation** |
+| --- | --- |
+| Initial customer | Engineering teams operating multi-service applications with shared or interconnected relational databases. |
+| Initial use case | Detect incompatible schema changes and unsafe migration order before merge/deployment. |
+| Initial integration | GitHub App + PostgreSQL schema/migration analysis + CI check. |
+| Runtime evidence | Add read-only query/telemetry integration after static analysis works. |
+| Core differentiation | Evidence-backed consumer mapping across repositories, migrations and observed runtime queries. |
+| Business model | B2B subscription priced by repositories/services/analysis volume; test willingness to pay before setting list prices. |
+| Do not build first | A new observability backend, general AI code reviewer, autonomous production repair system, or universal simulator. |
+
+# 1. Product definition and problem statement
+
+## 1.1 The problem
+
+In a distributed application, one database table or API contract may be used by multiple services, background workers, scheduled jobs and older application versions. A developer can change a schema or remove a field in one repository while another consumer still depends on it. Unit tests may pass because they do not cover every consumer, deployment order or production query path.
+
+A particularly dangerous case is a rolling deployment. New and old service versions can run simultaneously. A migration that is valid after every service has been upgraded may still break during the transition.
+
+## 1.2 Proposed product
+
+Working name: Database Change Intelligence (DCI). It is a pre-deployment compatibility and impact-analysis product, not a database hosting product and not a replacement for Flyway, Liquibase or Atlas.
+
+For each pull request or migration, DCI should:
+
+Parse migration files, schema definitions, ORM models and SQL references.
+
+Identify services and jobs that read or write affected tables, columns, indexes and stored procedures.
+
+Use deployment metadata to identify old/new application versions that may coexist.
+
+Optionally correlate static findings with observed query telemetry, with sensitive values removed.
+
+Classify findings as confirmed incompatibility, likely risk, or unknown due to missing evidence.
+
+Recommend a safe expand-and-contract sequence and targeted tests.
+
+Post an evidence-linked report to the pull request and CI pipeline.
+
+## 1.3 What it must not promise
+
+It must not claim to predict every database or production failure.
+
+It must not label an LLM-generated guess as a confirmed dependency.
+
+It must not automatically execute production migrations in the first release.
+
+It must not require customers to replace their current database, CI/CD or observability tools.
+
+# 2. Competitor landscape
+
+The competitor set is wider than PlayerZero and Datadog. They are the two primary benchmarks, but the product also competes with change-impact analysis, code intelligence, testing and database migration tools.
+
+| **Company/product** | **What it is strongest at** | **Implication for DCI** |
+| --- | --- | --- |
+| PlayerZero / Sim-1 | Scenario-based software simulation, semantic code relationships and system-level behavioural reasoning. | Closest conceptual competitor to broad software behaviour prediction. Avoid copying its broad simulation positioning. |
+| Datadog / Bits AI | Production telemetry, incident investigation, AI-assisted fixes, release validation and operational agents. | Do not build a new observability platform. Integrate with existing telemetry systems. |
+| Arcan | Code, functional and test impact analysis; release risk index and regression test selection. | A generic change-impact graph is not sufficient differentiation. |
+| CodeScene | Code health, hotspots, change patterns and maintainability risk. | Historical code-risk analytics is already established. |
+| Qodo | AI code review, repository context and engineering governance. | A generic PR reviewer or repository context engine is crowded. |
+| Greptile | Repository indexing and context-aware AI code review. | A codebase connector plus graph is not enough. |
+| Launchable | Predictive test selection from change and test history. | Targeted testing is an adjacent incumbent capability. |
+| Flyway / Liquibase / Atlas / Bytebase | Schema versioning, migration workflows, review and database change management. | DCI must complement these tools with cross-service consumer compatibility, not replace migration execution. |
+| Resolve AI / Cleric / Traversal | AI SRE and production incident investigation/automation. | These are adjacent if DCI expands into post-deployment operations. |
+
+## 2.1 PlayerZero: primary technical benchmark
+
+PlayerZero describes Sim-1 as a system built around natural-language scenarios and simulations. Scenarios can be inferred from codebases, tickets and issues. Simulations trace scenario execution through code and produce execution/state traces, confidence information and explanations. PlayerZero says Sim-1 uses an ensemble of specialised models and agents rather than a single model.
+
+Its published research reports evaluation across 2,770 scenarios from production codebases, simulation coherence over long traces, CodeSearchNet MRR of 0.873, and cross-language behavioural similarity of 96%. These are vendor-reported results. The published page does not constitute an independent, externally reproduced benchmark; metrics such as trace coherence and retrieval quality should not be confused with real-world production incident prediction accuracy.
+
+PlayerZero also explicitly lists limitations: highly nondeterministic or hardware-specific behaviour is difficult, and external systems can only be reasoned about from observed patterns. Its research is valuable because it shows how far a well-funded specialist is pushing semantic dependency graphs and scenario simulation.
+
+Strategic lesson: DCI should not attempt to recreate a general-purpose simulation model. It should use deterministic schema/query analysis wherever possible and reserve ML/LLM reasoning for explanation, uncertain relationship discovery and test recommendations.
+
+## 2.2 Datadog: primary platform and distribution benchmark
+
+Datadog is an established observability and security platform. Its advantage is not merely AI; it already has customers' logs, metrics, traces, service maps, deployment events and integrations. Its Bits AI portfolio includes Bits Chat, Bits Investigation, Bits Code, Bits Security Analyst and Bits Agent Builder.
+
+Bits Investigation forms hypotheses, queries telemetry to validate or reject them, and can return an inconclusive result when evidence is insufficient. Bits Code generates fixes grounded in production context. Bits Agent Builder lets teams create operational agents using Datadog tools and integrations.
+
+Bits Release is especially relevant. Its documentation says it analyses a merged pull request, determines expected production impact, waits for deployment, evaluates telemetry and reports a verdict. The documented preview workflow requires the Datadog GitHub App, service version tags and deployed commit SHA. It supports GitHub repositories in the documented preview and relies on existing telemetry; weak instrumentation means weaker evidence. Its verdicts include Passed, Failed, Not enough data and Inconclusive.
+
+Datadog's 2025 financial results reported $3.43 billion revenue, 28% year-over-year growth and 32,700 customers as of 31 December 2025. This scale demonstrates the strength of its platform and distribution, not that every newer AI feature has the same maturity.
+
+Strategic lesson: build on OpenTelemetry and integrate with Datadog/Prometheus/Grafana rather than compete to store all telemetry. A small startup cannot realistically reproduce Datadog's breadth of integrations and customer distribution.
+
+## 2.3 What the competitor analysis means
+
+The broad product idea—connect code, understand dependencies, predict changes and recommend fixes—is already being pursued. A startup needs a narrow workflow where it can produce more reliable evidence than general-purpose agents. DCI's proposed wedge is migration-time compatibility across multiple services and deployment versions.
+
+| **Potential differentiator** | **Why it could matter** | **What must be proven** |
+| --- | --- | --- |
+| Runtime-observed SQL consumers | Find real query consumers that static code search misses. | Can telemetry reliably map queries to services, versions and schema objects? |
+| Rolling-deployment compatibility | Model old and new service versions coexisting during migration. | Can it discover version overlap and identify incompatible transition steps? |
+| Evidence-first findings | Separate confirmed references from inferred or uncertain links. | Can false positives be kept low enough that developers trust the CI check? |
+| Migration plan generation | Recommend expand/backfill/dual-read/dual-write/contract steps where appropriate. | Do recommendations work across real customer migration patterns? |
+| Vendor-neutral integrations | Support common repositories, databases and telemetry systems. | Can onboarding be simple without building a massive integration team? |
+
+# 3. Customer problem and target market
+
+## 3.1 Ideal initial customer profile
+
+Target teams that operate several backend services, use PostgreSQL or MySQL, deploy services independently, and have shared schemas or cross-service data dependencies. The strongest early prospects are likely to be SaaS, fintech, e-commerce and B2B platforms with active release cycles.
+
+Avoid starting with tiny single-service apps: their migration risk may not be frequent or costly enough. Also avoid the largest regulated enterprises as the first customers because procurement, security reviews and integration complexity can overwhelm an early team.
+
+## 3.2 Buyer and user
+
+| **Role** | **What they care about** |
+| --- | --- |
+| Engineering manager / VP Engineering | Avoid outages, reduce release delays and protect engineering capacity. |
+| Platform / DevOps engineer | Reliable CI checks, deployment safety and low operational overhead. |
+| Database engineer / DBA | Schema safety, query consumers, lock risk and migration sequencing. |
+| Backend developer | Fast, specific findings in the pull request; low false-positive rate. |
+| QA / release manager | Know which integration and regression tests are needed. |
+
+## 3.3 Customer discovery questions
+
+Tell me about the last database migration or schema change that caused a production issue.
+
+How did you discover which services, workers or reports depended on the changed column/table?
+
+Do you deploy old and new service versions simultaneously? For how long?
+
+How do you currently detect queries still using a column scheduled for removal?
+
+Which tools do you use for migrations, CI, tracing and database monitoring?
+
+How many migration-related incidents or release delays happened in the last 12 months?
+
+What was the engineering time, downtime or revenue impact?
+
+Would you allow a read-only GitHub App and database telemetry integration? What security conditions would be mandatory?
+
+What would this tool need to catch before you would pay for it?
+
+What would make you reject its findings?
+
+# 4. Product scope and roadmap
+
+## 4.1 Version 1: static migration compatibility checker
+
+Start with one repository provider and one database engine. Recommended first combination: GitHub + PostgreSQL + common migration formats/ORMs. Support Python/SQLAlchemy and Java/Spring or Node.js/Prisma only after confirming the first customer segment's stack.
+
+| **Feature** | **V1 requirement** | **Acceptance test** |
+| --- | --- | --- |
+| GitHub App | Read-only repository access; PR webhook; CI status/report. | A PR triggers analysis without storing unnecessary source data. |
+| Migration parser | Parse PostgreSQL DDL and migration files. | Identify add/drop/rename/alter operations. |
+| Schema model | Build a versioned schema representation. | Compare base branch and PR schema. |
+| Consumer discovery | Search SQL, ORM models, query builders, stored procedures and jobs. | Find known references to changed objects. |
+| Impact report | Show affected services/files and evidence lines. | Every confirmed finding links to a concrete source. |
+| Safe migration advice | Suggest expand-and-contract patterns where applicable. | Recommendations include assumptions and human review. |
+| CI integration | Comment and pass/fail/warn status. | No blocking on uncertain evidence by default. |
+
+## 4.2 Version 2: runtime evidence
+
+Ingest OpenTelemetry attributes or database query telemetry from an existing observability stack.
+
+Map observed query fingerprints to service, deployment version and schema objects.
+
+Detect consumers not found in source code, such as dynamically generated queries or external jobs, where telemetry makes them visible.
+
+Track whether old application versions still issue queries against a column or table.
+
+Show confidence and observation window; absence of observed queries must not be treated as proof of no dependency.
+
+## 4.3 Version 3: migration transition analysis
+
+Model coexistence of old and new application versions during rolling deployments.
+
+Check compatibility at each migration stage: expand, deploy compatible code, backfill, switch reads/writes, contract.
+
+Identify unsafe ordering, missing backfills, incompatible constraints and likely lock/availability concerns.
+
+Generate a migration checklist and targeted test plan.
+
+Keep execution approval with the customer; do not autonomously run production DDL.
+
+## 4.4 Explicit non-goals for the first year
+
+No universal multi-language behavioural simulator.
+
+No new log/metrics/traces backend.
+
+No general autonomous SRE agent.
+
+No automatic production database changes.
+
+No promise to prevent every migration incident.
+
+No broad support for every database, ORM and repository provider at launch.
+
+# 5. Technical architecture
+
+The system should begin as a modular monolith with asynchronous jobs. Avoid Kafka, Kubernetes and a separate graph database until workload and customer requirements justify them.
+
+## 5.1 High-level architecture
+
+GitHub App / CI
+      ↓
+Webhook + Job Queue
+      ↓
+Repository & Migration Parser
+      ↓
+Versioned Schema Model + Code Reference Index
+      ↓
+Consumer/Dependency Resolver  ←  Optional Runtime Query Evidence
+      ↓
+Compatibility Rules Engine
+      ↓
+Evidence & Confidence Layer
+      ↓
+PR Comment + CI Check + Audit Report
+
+## 5.2 Suggested technology
+
+| **Layer** | **Initial choice** | **Reason** |
+| --- | --- | --- |
+| Backend API | Python + FastAPI | Fast iteration and strong parsing/ML ecosystem. |
+| Frontend | React + TypeScript | Developer dashboard and report UI. |
+| Primary database | PostgreSQL | Tenancy, metadata, findings and audit records. |
+| Code parsing | Tree-sitter plus language-specific parsers | Structural parsing across languages; SQL requires specialised parsing. |
+| SQL parsing | SQLGlot or database-native parser | Normalise SQL and identify referenced tables/columns. |
+| Graph model | Relational tables + recursive queries initially | Avoid graph infrastructure before it is necessary. |
+| Queue | Redis-backed worker/Celery or equivalent | Background repository analysis. |
+| Telemetry | OpenTelemetry / existing DB monitoring exports | Vendor-neutral runtime evidence. |
+| CI integration | GitHub App + Checks API | Put findings in the existing workflow. |
+| Execution isolation | Ephemeral containers for untrusted analysis tasks | Reduce risk from repository content and build scripts. |
+
+## 5.3 Core data model
+
+Minimum entities: Repository, Commit, PullRequest, Service, Deployment, Database, SchemaObject, Migration, QueryFingerprint, CodeReference, RuntimeObservation, DependencyEdge, Finding, Evidence, Confidence and Recommendation.
+
+Every finding should store provenance: which parser or telemetry source found it, the relevant commit/version, the exact file/line or query fingerprint, when it was observed, and whether the relationship is confirmed or inferred.
+
+## 5.4 Security architecture
+
+Use least-privilege GitHub permissions; begin with read-only repository access and only request PR write access if posting comments.
+
+Never request database write credentials for the initial product.
+
+Prefer customer-side telemetry export or read-only database views; do not collect raw customer data or query parameter values.
+
+Redact secrets, PII and SQL literals before storage or model processing.
+
+Encrypt data in transit and at rest; isolate tenants and enforce per-tenant access controls.
+
+Use short-lived tokens, audit every integration access and provide revocation/deletion controls.
+
+Treat repository files, build scripts, SQL and issue text as untrusted input; sandbox any execution.
+
+Offer a clear retention policy and an option to keep source code processing ephemeral.
+
+# 6. Prediction and evidence strategy
+
+The product should not begin with an LLM deciding whether a migration is safe. Use deterministic analysis first, then use models to help explain or investigate uncertain relationships.
+
+| **Finding class** | **Example** | **How to report it** |
+| --- | --- | --- |
+| Confirmed static dependency | A checked-in query selects the column being dropped. | Confirmed: file, line, query and affected object. |
+| Observed runtime dependency | A service version queried the column during the observation window. | Observed: service/version, fingerprint and time window. |
+| Inferred dependency | A dynamic query builder may reference the object. | Possible: explain inference and request review. |
+| Unknown | External service or job not visible in connected data. | Unknown: state what evidence is missing. |
+
+Do not use a single unexplained 'risk score'. Present severity, evidence strength, affected service count, migration stage and missing information separately. An inconclusive result is better than a confident but unsupported answer.
+
+## 6.1 Evaluation metrics
+
+| **Metric** | **Definition / target-setting approach** |
+| --- | --- |
+| Precision of blocking findings | Of findings that block a PR, how many are real incompatibilities? Prioritise high precision. |
+| Recall on known failures | Of seeded or historical migration failures, how many were detected? |
+| False-positive rate | How often safe changes are incorrectly flagged. |
+| Consumer discovery recall | How many known service/query consumers are identified. |
+| Evidence completeness | Share of findings with traceable source or telemetry evidence. |
+| Analysis latency | Time from PR event to actionable report. |
+| Developer trust | Warning dismissal rate, overrides and repeat usage. |
+| Business outcome | Migration incidents, rollback events or investigation hours avoided; measure against baseline. |
+
+Benchmark design: create a labelled suite of real and synthetic migrations covering drop/rename/type changes, constraints, indexes, backfills, stored procedures, ORM-generated SQL, background jobs, rolling deploys and external consumers. Include safe changes to measure false positives. Do not claim market-leading accuracy from a small synthetic benchmark.
+
+# 7. Business model and go-to-market
+
+## 7.1 Initial positioning
+
+| **Suggested positioning** A pull-request safety check that finds application services and runtime queries affected by a database migration, then explains whether the migration is safe during rolling deployment. |
+| --- |
+
+This is more concrete than 'AI that understands your software'. It names the buyer, workflow, risk and deliverable.
+
+## 7.2 Pricing hypotheses
+
+Do not publish a permanent price before customer discovery. Test a per-repository, per-service or monthly analysis allowance model. Enterprise pricing may depend on private deployment, audit requirements, retention, support and integration scope. Avoid pure per-token pricing because buyers want predictable release-safety costs.
+
+## 7.3 Route to market
+
+Start with developer-led adoption through a GitHub App and CI check.
+
+Target platform engineering and database engineering leads at 20–200 engineer software companies.
+
+Offer a time-limited pilot against a real upcoming migration, not a generic demo.
+
+Measure whether the product finds a dependency or migration hazard their existing process missed.
+
+Convert only when the customer agrees that the result is materially useful and will keep the check in CI.
+
+# 8. Main risks and mitigation
+
+| **Risk** | **Severity** | **Mitigation** |
+| --- | --- | --- |
+| Direct competition from PlayerZero and Datadog | High | Narrow the scope to migration compatibility and prove superior evidence for that workflow. |
+| Existing migration tools add similar features | High | Integrate with migration tools; focus on application consumers and rolling-deployment compatibility. |
+| False positives cause teams to ignore findings | Critical | Separate confirmed/inferred/unknown; only block on high-confidence, reproducible incompatibilities. |
+| Runtime telemetry misses dormant consumers | High | Never treat absence of traffic as proof of absence; combine source, deployment and runtime evidence. |
+| Dynamic SQL and external jobs are invisible | High | Report coverage gaps, support query telemetry and allow customer-provided service inventories. |
+| Enterprise security review slows adoption | High | Least privilege, read-only access, data minimisation, ephemeral processing and auditability. |
+| Multi-language support expands scope | High | Start with one language/framework and PostgreSQL; add based on paid customer demand. |
+| Hard to prove ROI | Medium–high | Measure avoided migration incidents, reduced manual dependency discovery and shorter review time. |
+
+# 9. Build plan and decision gates
+
+| **Stage** | **Work** | **Exit gate** |
+| --- | --- | --- |
+| Weeks 1–2: discovery | Interview 15–20 relevant engineers; collect anonymised migration failure stories; map existing tools. | At least 5 teams describe a repeated, costly migration compatibility problem and show their current workflow. |
+| Weeks 3–5: technical spike | Build GitHub PR ingestion, PostgreSQL migration parser, SQL/code reference discovery. | Can identify seeded references across a small multi-service sample repository. |
+| Weeks 6–8: evidence report | Add findings, source links, confidence classes and CI status. | Engineers can reproduce and verify each high-severity finding. |
+| Weeks 9–12: pilot | Run against real customer repositories with read-only permissions. | At least 2 teams use it on real migrations; at least 1 wants continued use or paid pilot. |
+| Months 4–6: runtime evidence | Add query fingerprint ingestion and deployment-version mapping. | Demonstrates additional useful consumers beyond static analysis without unacceptable false positives. |
+| Months 6–12: safe rollout analysis | Model old/new versions and migration phases; expand database/framework support only when demanded. | Paid renewals and measurable reduction in migration review effort or incidents. |
+
+These are proposed planning milestones, not guaranteed delivery estimates. A single experienced engineer may build the first static prototype, but a reliable commercial product will likely require backend, database, security and developer-experience expertise.
+
+# 10. Go / no-go criteria
+
+Proceed only if the following conditions are met:
+
+Customer discovery confirms that cross-service schema compatibility is a frequent and expensive problem for a defined segment.
+
+The first version finds real dependencies that current migration review and CI processes miss.
+
+High-severity findings have strong precision and evidence links.
+
+Customers can connect the tool without granting broad production write access.
+
+At least two design partners agree to run it on real migrations, and at least one demonstrates willingness to pay after a successful pilot.
+
+The product complements rather than duplicates the customer's existing migration and observability stack.
+
+Stop or change direction if customers say the problem is rare, existing tools already solve it adequately, access requirements are unacceptable, or the product cannot keep false positives low.
+
+# 11. Final recommendation
+
+| **Recommended decision: CONDITIONAL GO** Proceed with customer discovery and a narrow technical spike—not a full platform build. The most defensible starting hypothesis is cross-service database migration compatibility during rolling deployments, with source-level and runtime evidence. |
+| --- |
+
+PlayerZero should remain the primary benchmark for software understanding and behavioural reasoning. Datadog should remain the benchmark for telemetry, integrations, operational workflow and enterprise distribution. Neither should be copied feature-for-feature.
+
+The initial competitive advantage must be measurable: discover an actual consumer of a changing database object, identify the exact incompatible deployment window, and provide a safe, evidence-backed migration sequence. If the product cannot do that better than a customer's existing workflow, it does not yet have a reason to exist.
+
+## Immediate next 7 actions
+
+Study PlayerZero Sim-1 and record exactly what is claimed, what is measured and what is not disclosed.
+
+Study Datadog Bits Release, Bits Investigation and Bits Database Optimizer; note where each is pre-deployment, post-deployment or operational.
+
+Interview 5 backend engineers and 5 database/platform engineers about their last failed or delayed migration.
+
+Select one sample microservices repository with PostgreSQL and multiple services.
+
+Create 15–20 migration test cases, including safe changes and known breaking changes.
+
+Build only the parser and evidence-linked dependency report.
+
+Do not add an LLM agent until deterministic findings are working.
+
+# 12. Sources and further reading
+
+**[1] PlayerZero — Introducing Sim-1 (9 March 2026) — **https://playerzero.ai/research/sim-1
+
+**[2] PlayerZero — Deja Vu benchmark — **https://playerzero.ai/research/deja-vu-a-benchmark-on-the-ability-to-predict-customer-issues-before-they-happen
+
+**[3] Datadog — Bits AI Agents product page — **https://www.datadoghq.com/product/ai/bits-ai-agents/
+
+**[4] Datadog — Bits Investigation documentation — **https://docs.datadoghq.com/bits_ai/bits_investigation/
+
+**[5] Datadog — Investigate issues with Bits — **https://docs.datadoghq.com/bits_ai/bits_investigation/investigate_issues/
+
+**[6] Datadog — Bits Release documentation — **https://docs.datadoghq.com/bits_release/
+
+**[7] Datadog — 2025 annual report / SEC filing — **https://www.sec.gov/Archives/edgar/data/1561550/000162828026008819/ddog-20251231.htm
+
+**[8] Datadog — 2025 financial results — **https://investors.datadoghq.com/news-releases/news-release-details/datadog-announces-fourth-quarter-and-fiscal-year-2025-financial
+
+**[9] Datadog — Bits AI pricing and credits — **https://www.datadoghq.com/pricing/
+
+**[10] Datadog — Q2 2026 earnings call transcript / product updates — **https://investors.datadoghq.com/static-files/2360a5cc-f17a-4731-b74a-fb6f4617baf5
+
+**[11] Arcan — Impact Analysis — **https://www.arcan.tech/impact-analysis/
+
+**[12] Arcan — Product overview — **https://www.arcan.tech/
+
+**[13] OpenTelemetry — Collector — **https://opentelemetry.io/docs/collector/
+
+**[14] OpenTelemetry — Components — **https://opentelemetry.io/docs/concepts/components/
+
+**[15] Cleric — The State of AI SRE (13 May 2026) — **https://cleric.ai/resources/reports/the-state-of-ai-sre
+
+**[16] Resolve AI — AI SRE — **https://resolve.ai/product/ai-sre
+
+**[17] AI SRE landscape (reviewed October 2026) — **https://aisre.com/landscape
+
+Research note: Product descriptions and performance figures are based primarily on vendor documentation and company-published material. Vendor benchmarks, customer case studies and marketing claims are not independent proof of comparative performance. Product availability, pricing and preview status can change; verify directly with each vendor before making a purchase or investment decision.
+
+Confidential working document  •  4 November 2026  •  Page

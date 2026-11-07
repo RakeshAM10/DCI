@@ -1,0 +1,97 @@
+"""Command line interface. Exit codes: 0 pass, 1 blocking findings, 2 usage/config error, 3 internal error."""
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+
+from . import __version__, report
+from .analyze import analyze
+from .config import Config, ConfigError, load_file
+from .gitutil import GitError
+from .github import GitHubError, upsert_comment
+
+
+def _parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="dci", description="Database Change Intelligence: static compatibility checks for PostgreSQL migrations.")
+    p.add_argument("--version", action="version", version=f"dci {__version__}")
+    sub = p.add_subparsers(dest="cmd", required=True)
+    a = sub.add_parser("analyze", help="analyse the migrations in a change")
+    a.add_argument("--repo", default=".", help="repository root (default: .)")
+    a.add_argument("--base", help="base revision (e.g. origin/main); migrations added/modified since the merge-base are analysed")
+    a.add_argument("--head", help="head revision (default: working tree)")
+    a.add_argument("--migration", action="append", default=[], help="analyse this migration file instead of using git (repeatable)")
+    a.add_argument("--consumer", action="append", default=[], metavar="NAME=PATH", help="another repository whose code consumes this schema (repeatable)")
+    a.add_argument("--allow-outside-config-paths", action="store_true", help="allow consumer repositories named in .dci.toml to live outside the repository's parent directory")
+    a.add_argument("--config", help="path to .dci.toml (default: <repo>/.dci.toml if present)")
+    a.add_argument("--workspace", help="reject the repository and every consumer repository (from flags or .dci.toml) that resolves outside this directory")
+    a.add_argument("--format", choices=["text", "markdown", "json", "sarif"], default="text")
+    a.add_argument("--output", help="write the report to a file instead of stdout")
+    a.add_argument("--fail-on", choices=["error", "warning", "never"], help="severity at which CONFIRMED findings fail the run")
+    a.add_argument("--no-rolling-deploy", action="store_true", help="do not treat old-version/new-schema overlap as an error")
+    a.add_argument("--ignore-rule", action="append", default=[], help="suppress a rule id (repeatable)")
+    a.add_argument("--github-comment", action="store_true", help="post/update the report as a PR comment (needs GITHUB_TOKEN)")
+    return p
+
+
+def _build_config(ns: argparse.Namespace) -> Config:
+    cfg = Config(repo=ns.repo)
+    cfg_path = ns.config or os.path.join(ns.repo, ".dci.toml")
+    if ns.config and not os.path.isfile(ns.config):
+        raise ConfigError(f"Config file not found: {ns.config}")
+    if os.path.isfile(cfg_path):
+        load_file(cfg_path, cfg)
+    cfg.base, cfg.head, cfg.migrations = ns.base, ns.head, list(ns.migration)
+    cfg.workspace = ns.workspace
+    cfg.allow_outside_config_paths = ns.allow_outside_config_paths
+    for c in ns.consumer:
+        name, sep, path = c.partition("=")
+        if not sep or not name or not path:
+            raise ConfigError(f"--consumer expects NAME=PATH, got: {c}")
+        cfg.consumer_repos.append((name, path))
+    if ns.fail_on:
+        cfg.fail_on = ns.fail_on
+    if ns.no_rolling_deploy:
+        cfg.rolling_deploy = False
+    cfg.ignore_rules = [*cfg.ignore_rules, *[r.upper() for r in ns.ignore_rule]]
+    return cfg
+
+
+def main(argv: list[str] | None = None) -> int:
+    ns = _parser().parse_args(argv)
+    try:
+        cfg = _build_config(ns)
+        rep = analyze(cfg)
+    except (ConfigError, GitError) as e:
+        print(f"dci: error: {e}", file=sys.stderr)
+        return 2
+    except Exception as e:  # fail closed: never report a pass when the analysis itself broke
+        if os.environ.get("DCI_DEBUG"):
+            raise
+        print(f"dci: internal error: {e.__class__.__name__}: {e}", file=sys.stderr)
+        return 3
+
+    rendered = {"text": report.to_text, "markdown": report.to_markdown, "json": report.to_json, "sarif": report.to_sarif}[ns.format](rep)
+    if ns.output:
+        with open(ns.output, "w", encoding="utf-8") as fh:
+            fh.write(rendered)
+    else:
+        print(rendered)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        try:
+            with open(summary, "a", encoding="utf-8") as fh:
+                fh.write(report.to_markdown(rep) + "\n")
+        except OSError:
+            pass
+    if ns.github_comment:
+        try:
+            how = upsert_comment(report.to_markdown(rep, for_comment=True))
+            print(f"dci: PR comment {how}", file=sys.stderr)
+        except GitHubError as e:  # e.g. read-only token on fork PRs; the check result must not depend on this
+            print(f"dci: warning: could not post PR comment: {e}", file=sys.stderr)
+    return 1 if rep.blocking() else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

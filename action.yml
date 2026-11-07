@@ -1,0 +1,99 @@
+name: "DCI: database change check"
+description: >-
+  Static, evidence-linked compatibility check for PostgreSQL migrations (Alembic / SQL) against SQLAlchemy
+  consumers. Posts a PR comment, annotations and SARIF. Never connects to a database and never executes your code.
+author: "DCI"
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  base-ref:
+    description: "Base branch of the pull request. Defaults to the pull request's base branch."
+    required: false
+    default: ""
+  consumer-repos:
+    description: >-
+      Other repositories (already checked out inside the workspace) that consume this schema, one NAME=PATH per line.
+    required: false
+    default: ""
+  fail-on:
+    description: "Severity at which CONFIRMED findings fail the job: error, warning or never. Leave empty to use fail_on from .dci.toml on the base branch (default error). Set in the workflow, a PR can change it."
+    required: false
+    default: ""
+  rolling-deploy:
+    description: "Treat old-version/new-schema overlap (rollout window) as an error: true or false. Leave empty to use rolling_deploy from .dci.toml on the base branch (default true)."
+    required: false
+    default: ""
+  config:
+    description: "Path to a .dci.toml (default: .dci.toml in the working directory, if present)."
+    required: false
+    default: ""
+  trust-pr-config:
+    description: "Read .dci.toml from the pull request instead of the base branch. Default false: the PR author cannot weaken the check by editing the config."
+    required: false
+    default: "false"
+  working-directory:
+    description: "Repository root to analyse, relative to the workspace."
+    required: false
+    default: "."
+  comment:
+    description: "Post or update a single pull request comment (needs pull-requests: write)."
+    required: false
+    default: "true"
+  github-token:
+    description: "Token used only to post the PR comment."
+    required: false
+    default: ${{ github.token }}
+  python-version:
+    description: "Python version used to run DCI (3.11 or newer)."
+    required: false
+    default: "3.12"
+
+outputs:
+  verdict:
+    description: "pass, warn, fail or skipped."
+    value: ${{ steps.dci.outputs.verdict }}
+  blocking-count:
+    description: "Number of blocking (confirmed) findings."
+    value: ${{ steps.dci.outputs.blocking-count }}
+  report-path:
+    description: "Markdown report file."
+    value: ${{ steps.dci.outputs.report-path }}
+  json-path:
+    description: "JSON report file."
+    value: ${{ steps.dci.outputs.json-path }}
+  sarif-path:
+    description: "SARIF 2.1.0 file (for github/codeql-action/upload-sarif)."
+    value: ${{ steps.dci.outputs.sarif-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install DCI
+      shell: bash
+      env:
+        DCI_SRC: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        python -m pip install --disable-pip-version-check --no-input -c "$DCI_SRC/constraints.txt" "$DCI_SRC"
+
+    - name: Analyse database changes
+      id: dci
+      shell: bash
+      env:
+        INPUT_BASE_REF: ${{ inputs.base-ref }}
+        INPUT_CONSUMER_REPOS: ${{ inputs.consumer-repos }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_ROLLING_DEPLOY: ${{ inputs.rolling-deploy }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_TRUST_PR_CONFIG: ${{ inputs.trust-pr-config }}
+        INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        INPUT_COMMENT: ${{ inputs.comment }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: python -m dci.action_runner

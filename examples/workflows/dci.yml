@@ -1,0 +1,36 @@
+# Minimal setup: copy to .github/workflows/dci.yml in the repository that owns the migrations.
+name: DCI database change check
+on:
+  pull_request:
+    paths:
+      - "**/versions/*.py"
+      - "**/migrations/**"
+      - "**/*.py"
+
+permissions:
+  contents: read
+  pull-requests: write   # post/update the PR comment
+  security-events: write # upload SARIF to code scanning (remove with the last step if unused)
+
+concurrency:
+  group: dci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  dci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0          # DCI needs history to find the merge-base
+          persist-credentials: false
+      - id: dci
+        uses: YOUR-ORG/dci@v1     # pin to a full commit SHA in production
+      - name: Upload SARIF
+        if: always() && steps.dci.outputs.sarif-path != ''
+        continue-on-error: true   # forks and private repos without code scanning cannot upload
+        uses: github/codeql-action/upload-sarif@9418214df1f2c4b8128c770156c409013b07d6b9 # v3
+        with:
+          sarif_file: ${{ steps.dci.outputs.sarif-path }}
+          category: dci
