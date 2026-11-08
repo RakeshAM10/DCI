@@ -1,2 +1,4 @@
 # Exact runtime dependency versions used by the GitHub Action (reproducible installs).
 sqlglot==30.29.0
+PyYAML==6.0.3
+graphql-core==3.2.14

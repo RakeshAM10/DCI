@@ -1,0 +1,4 @@
+query,calls,rows
+select legacy_status from orders where id = $1,3,3
+"select o.id, o.total from orders o where o.customer_id = $1",1,5
+update orders set legacy_status = $1 where customer_id = $2,1,5

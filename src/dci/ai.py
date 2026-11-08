@@ -240,7 +240,7 @@ def enhance(report: Report, roots: dict[str, str], cfg: AiConfig, max_bytes: int
     """Attach advisory notes to up to cfg.max_findings findings. `roots` maps an evidence tree name ('head', 'consumer:<name>')
     to the directory holding that tree's files. Returns the number of notes attached. Never raises for model/network problems."""
     readers = {name: FsTree(path, name, max_bytes) for name, path in roots.items()}
-    todo = [f for f in report.findings if _pick_evidence(f)]
+    todo = [f for f in report.findings if f.change is not None and _pick_evidence(f)]  # the prompt is about schema changes; other check types are not sent
     todo.sort(key=lambda f: (_priority(f), f.severity.value != "error"))
     attached = discarded = failures = streak = 0
     for f in todo[: cfg.max_findings]:

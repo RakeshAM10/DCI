@@ -4,12 +4,12 @@ from __future__ import annotations
 import os
 import re
 
-from . import __version__, gitutil, rules
+from . import __version__, gitutil, rules, runtime
 from .config import Config, ConfigError
 from .consumers import Scanner
 from .identifiers import DEFAULT_SCHEMA, tkey
 from .migrations import parse_migration
-from .models import Change, ChangeKind, Coverage, ParseIssue, Report
+from .models import Change, ChangeKind, Confidence, Coverage, Finding, ParseIssue, Report, Severity
 from .sources import FsTree, GitTree, Matcher, Tree
 
 _SUPPRESS = re.compile(r"(?i)dci:\s*ignore(?:\[([A-Za-z0-9_,\s]+)\])?")
@@ -91,7 +91,8 @@ def analyze(cfg: Config) -> Report:
         if other:
             cov.notes.append(f"Changes in non-default schema(s) {', '.join(other)}: unqualified table names in code are assumed to be in "
                              f"'{DEFAULT_SCHEMA}' (a search_path set in the application or the database role is not analysed), so they are not matched to these changes.")
-        scanner = Scanner(targets, migration_match, ignore_match, test_match, cov, cfg.max_file_bytes)
+        scanner = Scanner(targets, migration_match, ignore_match, test_match, cov, cfg.max_file_bytes, cfg.workers,
+                          cfg.time_budget_seconds, cfg.max_total_bytes, cfg.parallel_min_files)
 
         head_refs = []
         base_refs = None
@@ -103,12 +104,25 @@ def analyze(cfg: Config) -> Report:
                 t = FsTree(path, f"consumer:{name}", cfg.max_file_bytes)
                 trees.append(t)
                 head_refs.extend(scanner.scan(t).refs)
+            for qpath in cfg.runtime_queries:
+                rrefs, n_q, n_bad = runtime.runtime_references(qpath, cfg.runtime_blocks)
+                head_refs.extend(r for r in rrefs if scanner._wanted(r))
+                cov.trees_scanned.append(f"runtime:{os.path.basename(qpath)}")
+                cov.notes.append(f"Runtime evidence {os.path.basename(qpath)}: {n_q} queries read, {n_bad} could not be parsed. "
+                                 + ("Treated as CONFIRMED (--runtime-blocks)." if cfg.runtime_blocks else
+                                    "Reported as POSSIBLE: statistics carry no timestamp, so a query may come from retired code."))
             if base_tree is not None:
                 base_refs = scanner.scan(base_tree).refs
         elif base_tree is not None:
             base_refs = []
 
         findings = rules.evaluate(changes, issues, head_refs, base_refs, created, cfg)
+        if cov.scan_incomplete:
+            findings.append(Finding(
+                "DCI901", Severity.WARNING, Confidence.UNKNOWN, "Scan incomplete",
+                f"The scan stopped at its size or time budget; {cov.files_not_scanned} file(s) were not read. Code in those files may still "
+                "use the changed tables or columns, so a missing finding is not evidence of safety. Raise time_budget_seconds or "
+                "max_total_bytes, or narrow the scan with ignore_paths.", None))
         findings = _apply_suppressions(findings, mig_text, cov)
         return Report(__version__, changes, findings, issues, cov, cfg.fail_on)
     finally:

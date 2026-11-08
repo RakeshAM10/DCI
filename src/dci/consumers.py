@@ -580,11 +580,17 @@ class ScanResult:
 
 class Scanner:
     def __init__(self, targets: dict[tuple[str, str], set[str]] | None, migration_match: Matcher, ignore_match: Matcher,
-                 test_match: Matcher, coverage: Coverage, max_bytes: int):
+                 test_match: Matcher, coverage: Coverage, max_bytes: int,
+                 workers: int = 0, time_budget_seconds: float = 900.0, max_total_bytes: int = 1_000_000_000,
+                 parallel_min_files: int = 400):
         """`targets` maps (schema, table) -> changed column names, all in canonical (PostgreSQL-folded) spelling."""
         self.targets = {k: set(v) for k, v in targets.items()} if targets is not None else None
         self.migration_match, self.ignore_match, self.test_match = migration_match, ignore_match, test_match
         self.cov, self.max_bytes = coverage, max_bytes
+        self.workers = workers
+        self.time_budget_seconds = time_budget_seconds
+        self.max_total_bytes = max_total_bytes
+        self.parallel_min_files = parallel_min_files
         self.target_cols = {c for v in self.targets.values() for c in v} if self.targets is not None else None
         # lower-case words used only by the cheap text prefilter and by dynamic-SQL matching (both case-insensitive)
         self._words = ({t.lower() for _s, t in self.targets} | {c.lower() for c in self.target_cols}) if self.targets is not None else None

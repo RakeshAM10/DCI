@@ -5,17 +5,18 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "dci"
 version = "1.0.0"
-description = "Database Change Intelligence: static, evidence-linked compatibility checks for PostgreSQL migrations (Alembic / SQL) against SQLAlchemy consumers."
+description = "Software Change Intelligence: evidence-linked pull-request checks (PostgreSQL migrations, OpenAPI contracts) with production evidence."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Proprietary" }
-dependencies = ["sqlglot>=27,<32"]
+dependencies = ["sqlglot>=27,<32", "pyyaml>=6,<7", "graphql-core>=3.2,<3.3"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pyyaml>=6"]
 
 [project.scripts]
 dci = "dci.cli:main"
+sci = "sci.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

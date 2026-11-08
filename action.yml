@@ -1,7 +1,7 @@
-name: "DCI: database change check"
+name: "SCI: software change check"
 description: >-
-  Static, evidence-linked compatibility check for PostgreSQL migrations (Alembic / SQL) against SQLAlchemy
-  consumers. Posts a PR comment, annotations and SARIF. Never connects to a database and never executes your code.
+  Static, evidence-linked compatibility checks for pull requests: PostgreSQL migrations (Alembic / SQL) against SQLAlchemy
+  consumers, and OpenAPI contract changes against callers in any language, with optional production query and access-log evidence. Posts a PR comment, annotations and SARIF. Never connects to a database and never executes your code.
 author: "DCI"
 branding:
   icon: shield
@@ -37,6 +37,22 @@ inputs:
     description: "Anthropic API key (pass a secret). Not available to fork pull requests, where AI assistance is skipped."
     required: false
     default: ""
+  checks:
+    description: "Comma-separated checks to run: db (database migrations), api (OpenAPI / Swagger contract changes), graphql (GraphQL schema changes). Default: db,api,graphql."
+    required: false
+    default: "db,api,graphql"
+  api-access-logs:
+    description: "Comma- or newline-separated access-log files (inside the workspace) used as runtime evidence for API changes (JSON, JSON Lines, CSV or Common Log Format)."
+    required: false
+    default: ""
+  runtime-queries:
+    description: "Comma- or newline-separated files (inside the workspace) with queries seen in production, e.g. a pg_stat_statements export (CSV/JSON/JSONL)."
+    required: false
+    default: ""
+  runtime-blocks:
+    description: "Treat runtime query evidence as CONFIRMED so it can fail the check (default false: reported as possible)."
+    required: false
+    default: "false"
   ai-model:
     description: "Model name for AI assistance (default claude-sonnet-5-5)."
     required: false
@@ -110,6 +126,10 @@ runs:
         INPUT_CONFIG: ${{ inputs.config }}
         INPUT_TRUST_PR_CONFIG: ${{ inputs.trust-pr-config }}
         INPUT_AI_ASSIST: ${{ inputs.ai-assist }}
+        INPUT_CHECKS: ${{ inputs.checks }}
+        INPUT_API_ACCESS_LOGS: ${{ inputs.api-access-logs }}
+        INPUT_RUNTIME_QUERIES: ${{ inputs.runtime-queries }}
+        INPUT_RUNTIME_BLOCKS: ${{ inputs.runtime-blocks }}
         INPUT_AI_MODEL: ${{ inputs.ai-model }}
         INPUT_AI_MAX_FINDINGS: ${{ inputs.ai-max-findings }}
         ANTHROPIC_API_KEY: ${{ inputs.ai-api-key }}

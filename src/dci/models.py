@@ -137,6 +137,8 @@ class Coverage:
     files_skipped_too_large: list[str] = field(default_factory=list)
     models_found: int = 0
     notes: list[str] = field(default_factory=list)
+    scan_incomplete: bool = False  # a size or time budget stopped the scan: absence of findings proves less
+    files_not_scanned: int = 0
 
 
 @dataclass
@@ -147,6 +149,8 @@ class Report:
     issues: list[ParseIssue]
     coverage: Coverage
     fail_on: str = "error"
+    title: str = "DCI database change check"
+    headline: str = ""  # replaces the schema-change summary line when set (multi-check runs)
 
     def blocking(self) -> list[Finding]:
         """Only confirmed findings at the configured severity can fail CI. Possible/unknown never block."""

@@ -1,7 +1,5 @@
 # DCI: Database Change Intelligence
 
-> **Next-generation database safety: from PR static analysis to live runtime query intelligence and automated safe migration planning.**
-
 A pull-request check for PostgreSQL migrations. When a PR adds an Alembic or SQL migration, DCI finds the code that
 depends on the changed tables and columns (SQLAlchemy models and queries, raw SQL, `.sql` files, other repositories),
 says whether the change can break it, **shows the file and line as evidence**, and suggests a safe expand/contract
@@ -110,3 +108,70 @@ Recommended hardening: leave `fail-on` and `rolling-deploy` unset in the workflo
     ai-assist: "true"
     ai-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
+
+## Runtime evidence (queries seen in production)
+
+Static analysis only sees code in the scanned repositories. To also cover services in other languages, export the queries your database really ran and pass them in:
+
+```sql
+\copy (select query, calls from pg_stat_statements) to 'queries.csv' csv header
+```
+
+```
+dci analyze --base main --runtime-queries queries.csv          # reported as POSSIBLE
+dci analyze --base main --runtime-queries queries.csv --runtime-blocks   # you vouch the statistics are current: CONFIRMED, can fail the check
+```
+
+Action inputs: `runtime-queries`, `runtime-blocks`. Accepted formats: CSV with a `query` column, JSON list, `{"queries": [...]}`, or JSON Lines (max 50 MB / 200,000 rows). Files are parsed as data and never executed; literals are redacted in reports. Statistics have no timestamp, so by default they never block on their own.
+
+## SCI: API-contract checks (`sci`)
+
+`sci` runs every enabled change check with one verdict and one exit code. `dci analyze` still runs the database check alone.
+
+```
+sci --repo . --base origin/main                       # db + api
+sci --repo . --base origin/main --checks api --api-access-log access.log
+```
+
+**What the API check does.** For each OpenAPI 3.x file changed in the PR (`api_spec_globs`, default `openapi*.{yaml,yml,json}`, `swagger*`, `*.openapi.*`), it compares the base and head versions and reports breaking changes:
+
+| Rule | Change | Can it block? |
+|---|---|---|
+| API101 | endpoint removed and still called (method + path visible on a call) | yes, CONFIRMED |
+| API102/103/105 | removed endpoint called only from tests / possibly called / no caller visible | no / no / info |
+| API111-116 | new or newly required parameter, body or property; changed request type; narrowed request enum; success response removed | no (POSSIBLE) |
+| API121-124 | response property removed, type changed, no longer always present; enum gained values | no (POSSIBLE) |
+| API901/902 | scan incomplete / specification could not be parsed | no (UNKNOWN) |
+
+Callers are found in **any language** by matching string literals (and bare URLs in scripts) against the path templates, and a route definition (`@app.route`, `router.get`, `@GetMapping`, `HandleFunc`...) is never counted as a caller. Only a removed endpoint can be CONFIRMED, because only then does a visible call prove the break; for every other change DCI cannot see what a client sends or reads, so it stays POSSIBLE.
+
+**Runtime evidence.** `--api-access-log` accepts JSON, JSON Lines, CSV (`method`, `path`, optional `count`, `status`) or Common/Combined Log Format. Endpoints that only ever returned errors are ignored. Like query statistics, logs are POSSIBLE unless `--runtime-blocks` says they are current.
+
+**Security.** Specifications and logs are data: YAML alias expansion, nesting, size and row counts are bounded before anything is built, remote `$ref`s are never fetched, nothing is executed. Memory stays flat on huge repositories (at most 500 references kept per category, the rest are counted).
+
+**Swagger 2.0** files are converted on the fly (parameters, body, formData, responses, definitions, basePath) and checked with the same rules.
+
+**Not covered yet:** gRPC/AsyncAPI, `oneOf`/`anyOf` bodies (not compared, to avoid guessing), changed authentication requirements, and callers that build URLs from several variables.
+
+GitHub Action: `checks: db,api,graphql` (default) and `api-access-logs`.
+
+### Validating on your own history
+
+`python tools/replay.py REPO [--max N] [--globs GLOB,...]` replays the API check over every commit that changed an OpenAPI file, as if each were a PR against its parent, and prints every finding for a human to judge. Use it before enabling the check as blocking. It was used on `swagger-petstore` (55 spec commits), Redocly's museum example and Stripe's 8 MB spec; those runs found and fixed three false-positive classes (a redefined `default` response, grouped identical findings, specs above the source-file size limit).
+
+## SCI: GraphQL checks (`--checks graphql`)
+
+GraphQL clients name every field they use, so this check can *prove* breaks. It builds the base and head schema from the SDL (`*.graphql`, `*.graphqls`, `*.gql`, merged across files, plus `typeDefs = gql`...`` strings in changed code files), compares them with graphql-core, then parses the operation documents found in code (`gql` templates, triple-quoted strings, `.graphql` files) and resolves every field, argument, type and enum value against the **base** schema.
+
+| Rule | Meaning | Can it block? |
+|---|---|---|
+| GQL101 | removed field / argument / type / enum value that an operation still uses | yes, CONFIRMED |
+| GQL104 | a new required argument that an operation does not pass | yes, CONFIRMED |
+| GQL102 / GQL106 | the same, but only in test code | no (warning) |
+| GQL105 | removal or addition with no visible client | no (info, UNKNOWN) |
+| GQL113 | field or argument changed type; clients using it listed | no (POSSIBLE) |
+| GQL114 | other breaking changes (union member, interface, directive) with no usage analysis | no (POSSIBLE) |
+| GQL121 | changes that can affect clients (enum value added, optional argument added) | no (info) |
+| GQL902 | a schema could not be built or parsed | no (UNKNOWN) |
+
+Test files (`__tests__`, `*.spec.*`, `*.test.*`, `src/test`, ...) are recognised by `test_globs`. Limits: operations built by string concatenation, persisted queries and generated clients that no longer contain the query text cannot be seen; a schema split between unchanged code strings and `.graphql` files may fail to build (reported as GQL902, never silently passed).

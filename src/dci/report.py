@@ -41,66 +41,41 @@ def to_markdown(r: Report, for_comment: bool = False) -> str:
     out: list[str] = []
     if for_comment:
         out.append(MARKER)
-    out.append(f"## DCI database change check: {_verdict(r)}")
-    out.append(f"{_counts(r)} · {len(r.changes)} schema change(s) in {len(r.coverage.migration_files)} migration file(s) · DCI {r.version}")
+    out.append(f"## {r.title}: {_verdict(r)}")
+    out.append(r.headline or f"{_counts(r)} · {len(r.changes)} schema change(s) in {len(r.coverage.migration_files)} migration file(s) · DCI {r.version}")
     out.append("")
-    if not r.changes and not r.issues:
+    if not r.changes and not r.issues and not r.headline:
         out.append("No schema-changing operations were found in the analysed migrations.")
     order = {Severity.ERROR: 0, Severity.WARNING: 1, Severity.INFO: 2}
     conf = {Confidence.CONFIRMED: 0, Confidence.POSSIBLE: 1, Confidence.UNKNOWN: 2}
-    sorted_findings = sorted(r.findings, key=lambda f: (order[f.severity], conf[f.confidence], f.file, f.line, f.rule_id))
-
-    confirmed = [f for f in sorted_findings if f.confidence == Confidence.CONFIRMED]
-    advisory = [f for f in sorted_findings if f.confidence != Confidence.CONFIRMED]
-
-    def _render_finding(f: Finding, compact: bool = False) -> list[str]:
-        f_lines = []
+    for f in sorted(r.findings, key=lambda f: (order[f.severity], conf[f.confidence], f.file, f.line, f.rule_id)):
         tag = f"{f.severity.value.upper()} · {f.confidence.value.upper()}"
-        f_lines.append(f"### [{f.rule_id}] {f.title} — {tag}")
+        out.append(f"### [{f.rule_id}] {f.title} — {tag}")
         what = f"{f.change.describe()}" if f.change else ""
-        loc = _loc(f)
-        if loc or what:
-            f_lines.append(f"{loc} {what}".strip())
-            f_lines.append("")
-        f_lines.append(f.message)
+        out.append(f"{_loc(f)} {what}".strip())
+        out.append("")
+        out.append(f.message)
         if f.evidence:
-            f_lines.append("")
-            f_lines.append(f"**Evidence ({len(f.evidence)} of {f.total_evidence} shown):**")
-            f_lines.extend(_evidence_line(e) for e in f.evidence)
+            out.append("")
+            out.append(f"Evidence ({len(f.evidence)} of {f.total_evidence} shown):")
+            out.extend(_evidence_line(e) for e in f.evidence)
         if f.recommendation:
-            f_lines.append("")
-            if compact:
-                f_lines.append("<details><summary><b>🛠️ Suggested safe sequence (expand & contract)</b></summary>\n")
-                f_lines.extend(f"{i}. {s}" for i, s in enumerate(f.recommendation, 1))
-                f_lines.append("\n</details>")
-            else:
-                f_lines.append("Suggested safe sequence:")
-                f_lines.extend(f"{i}. {s}" for i, s in enumerate(f.recommendation, 1))
+            out.append("")
+            out.append("Suggested safe sequence:")
+            out.extend(f"{i}. {s}" for i, s in enumerate(f.recommendation, 1))
         if f.ai:
-            f_lines.append("")
-            f_lines.append(f"**AI-assisted analysis** (advisory, does not change the result; model `{f.ai.model}`): "
-                           f"**{_AI_LABEL.get(f.ai.verdict, f.ai.verdict)}**. {f.ai.summary}")
-            f_lines.extend(f"- cited `{c['file']}:{c['line']}`: `{c['quote']}`" for c in f.ai.citations)
+            out.append("")
+            out.append(f"**AI-assisted analysis** (advisory, does not change the result; model `{f.ai.model}`): "
+                       f"**{_AI_LABEL.get(f.ai.verdict, f.ai.verdict)}**. {f.ai.summary}")
+            out.extend(f"- cited `{c['file']}:{c['line']}`: `{c['quote']}`" for c in f.ai.citations)
             if f.ai.suggested_fix:
-                f_lines.append(f"AI-suggested fix: {f.ai.suggested_fix}")
-        f_lines.append("")
-        return f_lines
-
-    if for_comment and advisory and confirmed:
-        for f in confirmed:
-            out.extend(_render_finding(f, compact=True))
-        out.append(f"<details><summary><b>⚠️ Advisory findings ({len(advisory)} non-blocking: {sum(1 for f in advisory if f.severity == Severity.WARNING)} warning, {sum(1 for f in advisory if f.severity == Severity.INFO)} info)</b></summary>\n")
-        for f in advisory:
-            out.extend(_render_finding(f, compact=True))
-        out.append("</details>\n")
-    else:
-        for f in sorted_findings:
-            out.extend(_render_finding(f, compact=for_comment))
-
+                out.append(f"AI-suggested fix: {f.ai.suggested_fix}")
+        out.append("")
     cov = r.coverage
     out.append("<details><summary>Coverage and limits</summary>\n")
     out.append(f"- Source trees scanned: {', '.join(cov.trees_scanned) or 'none'}")
-    out.append(f"- Python files parsed: {cov.python_files_parsed} (skipped by relevance filter: {cov.python_files_skipped_by_filter}); SQL files parsed: {cov.sql_files_parsed}; SQLAlchemy models found: {cov.models_found}")
+    if r.changes or cov.python_files_parsed or not r.headline:
+        out.append(f"- Python files parsed: {cov.python_files_parsed} (skipped by relevance filter: {cov.python_files_skipped_by_filter}); SQL files parsed: {cov.sql_files_parsed}; SQLAlchemy models found: {cov.models_found}")
     if cov.python_files_failed:
         out.append(f"- Python files that could not be parsed ({len(cov.python_files_failed)}): " + ", ".join(cov.python_files_failed[:10]))
     if cov.files_skipped_too_large:
@@ -118,7 +93,7 @@ def to_markdown(r: Report, for_comment: bool = False) -> str:
 
 
 def to_text(r: Report) -> str:
-    out = [f"DCI {r.version}: {_verdict(r)} ({_counts(r)})"]
+    out = [f"{'SCI' if r.headline else 'DCI'} {r.version}: {_verdict(r)} ({_counts(r)})"]
     for f in sorted(r.findings, key=lambda f: (f.severity != Severity.ERROR, f.file, f.line)):
         out.append(f"\n[{f.rule_id}] {f.severity.value.upper()} {f.confidence.value}: {f.title}")
         if f.file:
@@ -184,6 +159,6 @@ def to_sarif(r: Report) -> str:
     doc = {
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",
-        "runs": [{"tool": {"driver": {"name": "dci", "version": r.version, "rules": list(rules.values())}}, "results": results}],
+        "runs": [{"tool": {"driver": {"name": "sci" if r.headline else "dci", "version": r.version, "rules": list(rules.values())}}, "results": results}],
     }
     return json.dumps(doc, indent=2)

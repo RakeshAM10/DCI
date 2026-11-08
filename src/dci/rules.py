@@ -186,10 +186,16 @@ def _destructive(ch: Change, head: list[Reference], base: list[Reference] | None
             f"DCI{base_id + 1}", Severity.WARNING, C, f"{title.split(' is ')[0]} is referenced only from tests",
             f"{len(ct)} reference(s) to {obj} remain in test code and will fail after the migration.", ch, ct, None, cfg))
     if po:
-        out.append(_mk(
-            f"DCI{base_id + 2}", Severity.WARNING, P, "Possible references (dynamic or ambiguous SQL)",
-            f"{len(po)} location(s) may reference {obj} through dynamic SQL, ambiguous names or SELECT *. "
-            "DCI could not prove or rule these out; review them.", ch, po, None, cfg))
+        if all(r.via == "runtime_query" for r in po):
+            out.append(_mk(
+                f"DCI{base_id + 2}", Severity.WARNING, P, "Queries seen in production reference this",
+                f"{len(po)} query/queries from the supplied runtime statistics use {obj}. The statistics carry no timestamp, so "
+                "they may come from retired code; check that no live service still runs them.", ch, po, None, cfg))
+        else:
+            out.append(_mk(
+                f"DCI{base_id + 2}", Severity.WARNING, P, "Possible references (dynamic, ambiguous or runtime-observed SQL)",
+                f"{len(po)} location(s) may reference {obj} through dynamic SQL, ambiguous names, SELECT * or queries seen at runtime. "
+                "DCI could not prove or rule these out; review them.", ch, po, None, cfg))
 
     if base is not None:
         base_m = match_column(base, t, ch.column or "") if level == "column" else match_table(base, t)

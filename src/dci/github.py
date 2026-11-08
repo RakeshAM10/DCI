@@ -57,7 +57,7 @@ def pr_number_from_event() -> int | None:
     return int(n) if isinstance(n, int) else None
 
 
-def upsert_comment(markdown: str, repo: str | None = None, pr: int | None = None, token: str | None = None) -> str:
+def upsert_comment(markdown: str, repo: str | None = None, pr: int | None = None, token: str | None = None, create: bool = True) -> str:
     token = token or os.environ.get("GITHUB_TOKEN")
     repo = repo or os.environ.get("GITHUB_REPOSITORY")
     pr = pr or pr_number_from_event()
@@ -80,5 +80,7 @@ def upsert_comment(markdown: str, repo: str | None = None, pr: int | None = None
     if existing:
         _req("PATCH", f"{base}/repos/{repo}/issues/comments/{int(existing)}", token, {"body": markdown})
         return "updated"
+    if not create:
+        return "skipped"
     _req("POST", comments_url, token, {"body": markdown})
     return "created"

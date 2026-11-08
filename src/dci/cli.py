@@ -31,6 +31,10 @@ def _parser() -> argparse.ArgumentParser:
     a.add_argument("--fail-on", choices=["error", "warning", "never"], help="severity at which CONFIRMED findings fail the run")
     a.add_argument("--no-rolling-deploy", action="store_true", help="do not treat old-version/new-schema overlap as an error")
     a.add_argument("--ignore-rule", action="append", default=[], help="suppress a rule id (repeatable)")
+    a.add_argument("--runtime-queries", action="append", default=[], help="file of queries seen in production, e.g. a pg_stat_statements export (CSV/JSON/JSONL); repeatable")
+    a.add_argument("--runtime-blocks", action="store_true", help="treat runtime query evidence as CONFIRMED (you vouch the statistics are current)")
+    a.add_argument("--workers", type=int, help="worker processes for scanning large trees (0 = automatic, 1 = off)")
+    a.add_argument("--time-budget", type=float, help="seconds before the scan stops and reports itself incomplete (0 = unlimited)")
     a.add_argument("--ai", action="store_true", help="add advisory AI notes to findings (needs ANTHROPIC_API_KEY; sends redacted code excerpts to the API)")
     a.add_argument("--ai-model", help="model name for --ai")
     a.add_argument("--ai-max-findings", type=int, default=5, help="max findings analysed by --ai (1-20)")
@@ -48,6 +52,16 @@ def _build_config(ns: argparse.Namespace) -> Config:
     cfg.base, cfg.head, cfg.migrations = ns.base, ns.head, list(ns.migration)
     cfg.workspace = ns.workspace
     cfg.allow_outside_config_paths = ns.allow_outside_config_paths
+    cfg.runtime_queries = list(ns.runtime_queries)
+    cfg.runtime_blocks = ns.runtime_blocks
+    if ns.workers is not None:
+        if not 0 <= ns.workers <= 64:
+            raise ConfigError("--workers must be between 0 and 64")
+        cfg.workers = ns.workers
+    if ns.time_budget is not None:
+        if ns.time_budget < 0:
+            raise ConfigError("--time-budget must not be negative")
+        cfg.time_budget_seconds = ns.time_budget
     for c in ns.consumer:
         name, sep, path = c.partition("=")
         if not sep or not name or not path:
@@ -61,11 +75,12 @@ def _build_config(ns: argparse.Namespace) -> Config:
     return cfg
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, runner=None) -> int:
+    """`runner(cfg) -> Report` replaces the database-only analysis (used by the `sci` command)."""
     ns = _parser().parse_args(argv)
     try:
         cfg = _build_config(ns)
-        rep = analyze(cfg)
+        rep = (runner or analyze)(cfg)
     except (ConfigError, GitError) as e:
         print(f"dci: error: {e}", file=sys.stderr)
         return 2

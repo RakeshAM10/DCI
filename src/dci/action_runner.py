@@ -20,7 +20,7 @@ from .models import Finding, Severity
 
 _REF = re.compile(r"^[A-Za-z0-9._/\-]+$")
 _CONSUMER = re.compile(r"^([A-Za-z0-9._\-]+)=(.+)$")
-MAX_ANNOTATIONS = 50
+MAX_ANNOTATIONS_PER_LEVEL = 10  # GitHub shows at most 10 error and 10 warning annotations per step; the rest are in the comment/summary
 MAX_SUMMARY = 900_000
 
 
@@ -196,9 +196,20 @@ def _run() -> int:
             raise ConfigError("fail-on must be one of: error, warning, never")
         cfg.fail_on = fo
     cfg.rolling_deploy = _bool("rolling-deploy", cfg.rolling_deploy)
+    rq = _in("runtime-queries")
+    if rq:
+        cfg.runtime_queries = [_inside(workspace, x.strip(), "runtime-queries") for x in rq.replace(",", "\n").splitlines() if x.strip()]
+        cfg.runtime_blocks = _bool("runtime-blocks", False)
     want_comment = _bool("comment", True)
 
-    rep = analyze(cfg)
+    checks = [c.strip() for c in (_in("checks") or "db").split(",") if c.strip()]
+    if checks == ["db"]:
+        rep = analyze(cfg)
+    else:
+        from sci.run import run_checks  # noqa: PLC0415 - SCI sits on top of DCI
+        al = _in("api-access-logs")
+        cfg.api_access_logs = [_inside(workspace, x.strip(), "api-access-logs") for x in al.replace(",", "\n").splitlines() if x.strip()]
+        rep = run_checks(cfg, checks)
     rep.coverage.notes.extend(config_notes)
     if _bool("ai-assist", False):
         _run_ai(rep, cfg, repo)
@@ -217,12 +228,21 @@ def _run() -> int:
     blocking = rep.blocking()
     blocking_ids = {id(f) for f in blocking}
     print(report.to_text(rep))
-    shown = 0
+    shown = {"error": 0, "warning": 0}
+    omitted = 0
     for f in sorted(rep.findings, key=lambda f: (id(f) not in blocking_ids, f.severity != Severity.ERROR)):
         a = annotation(f, id(f) in blocking_ids)
-        if a and shown < MAX_ANNOTATIONS:
+        if not a:
+            continue
+        level = "error" if a.startswith("::error") else "warning"
+        if shown[level] < MAX_ANNOTATIONS_PER_LEVEL:
             print(a)
-            shown += 1
+            shown[level] += 1
+        else:
+            omitted += 1
+    if omitted:
+        print(f"::notice title=DCI::{omitted} more finding(s) are not shown as annotations (GitHub shows at most "
+              f"{MAX_ANNOTATIONS_PER_LEVEL} errors and {MAX_ANNOTATIONS_PER_LEVEL} warnings per step). See the PR comment or job summary.")
     verdict = report.to_markdown(rep).splitlines()[0].split(": ", 1)[1]
     outputs.update({"verdict": verdict.split(" ")[0].lower(), "blocking-count": str(len(blocking))})
     _write_output(outputs)
@@ -234,7 +254,9 @@ def _run() -> int:
 
     if want_comment and event in ("pull_request", "pull_request_target") and os.environ.get("GITHUB_TOKEN"):
         try:
-            how = upsert_comment(report.to_markdown(rep, for_comment=True))
+            # a PR that changes nothing DCI understands gets no new comment (an existing one is still updated)
+            relevant = bool(rep.changes or rep.issues or rep.findings)
+            how = upsert_comment(report.to_markdown(rep, for_comment=True), create=relevant)
             print(f"DCI {__version__}: PR comment {how}")
         except GitHubError as e:  # read-only tokens (fork PRs) must not change the check result
             print(f"::warning title=DCI could not post the PR comment::{escape_data(str(e))}")

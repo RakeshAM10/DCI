@@ -296,3 +296,17 @@ Open: search_path/MetaData cases are covered by unit tests but not yet by Postgr
 
 New `src/dci/ai.py` (advisory notes; `AiNote` on `Finding.ai`), wired into `action_runner._run_ai`, `cli --ai`, `report` renderers, `action.yml` inputs `ai-assist`, `ai-api-key`, `ai-model`, `ai-max-findings`. Guarantees: never changes severity/confidence/blocking; redacted excerpts only; JSON-strict answers; citation verification against the exact lines sent; sanitised output; failures never fail the check; opt-in.
 Testing honesty: no mock API server. Tested for real: prompt building and redaction on real scans, answer validation and citation checks, sanitising, rendering, behaviour against an unreachable host, Action/CLI without a key. NOT verified: a real model call. `tests/test_ai.py::test_live_model_notes_are_validated_and_advisory` runs only when ANTHROPIC_API_KEY is set (it was skipped here). Run it with a real key before releasing, and review real answers for quality. The default model name `claude-sonnet-5-5` also needs confirming against your account.
+
+## 4g. Scale, security and runtime evidence
+- Scale: fork-based parallel scan with ordered merge (deterministic), time/size budgets, DCI901 when the scan is incomplete, bounded regex/redaction (ReDoS tests in tests/test_scale.py).
+- Runtime evidence (`src/dci/runtime.py`): operator-supplied query statistics become POSSIBLE references (`via=runtime_query`); `--runtime-blocks` keeps CONFIRMED. Tested with a real pg_stat_statements export (tests/data/pg_stat_statements_pg16.csv).
+
+## 4h. SCI (src/sci)
+- `sci.run.run_checks` runs enabled checks on the shared Config/Finding/Report model; DCI stays the `db` check. `sci.cli` delegates to `dci.cli.main(runner=...)` so flags, output formats, PR comment and exit codes are identical.
+- `sci.oas`: OpenAPI 3.x parse (bounded YAML), local $ref resolution, schema flattening (allOf merged; oneOf/anyOf opaque), diff -> rule ids API101..API124.
+- `sci.callers`: language-independent literal matching with method hints; definitions skipped; CONFIRMED only for a full path match with the same method on the call; capped storage + exact counts.
+- `sci.accesslog`: JSON/JSONL/CSV/CLF -> aggregated per (method, path); error-only endpoints ignored.
+- Policy: only API101 (removed endpoint + visible call) is ever CONFIRMED.
+- Real-repo lessons (tools/replay.py): `default` response is the catch-all for undocumented codes, so it is only compared when it was the operation's only success response; identical changes across endpoints are one finding; info findings merge per rule; specs are read under MAX_SPEC_BYTES (50 MB), not the 2 MB source limit; a quoted method on the previous line counts as a method hint.
+- `sci.check_graphql`: graphql-core `find_breaking_changes` + usage proof via TypeInfoVisitor over operation documents (resolved against the BASE schema). CONFIRMED only for removed members used by an operation (GQL101) and required args not supplied (GQL104). Test globs now cover __tests__, *.spec.*, *.test.*, src/test, *_test.go, *Test.java.
+- Swagger 2.0 is converted to the OpenAPI 3 shape in `sci.oas._from_swagger2`.
