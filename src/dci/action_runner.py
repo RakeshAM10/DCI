@@ -24,6 +24,11 @@ MAX_ANNOTATIONS_PER_LEVEL = 10  # GitHub shows at most 10 error and 10 warning a
 MAX_SUMMARY = 900_000
 
 
+def _html(rep):
+    from sci.htmlreport import to_html  # noqa: PLC0415
+    return to_html(rep)
+
+
 def _in(name: str, default: str = "") -> str:
     return os.environ.get("INPUT_" + name.upper().replace("-", "_"), default).strip()
 
@@ -203,6 +208,15 @@ def _run() -> int:
     want_comment = _bool("comment", True)
 
     checks = [c.strip() for c in (_in("checks") or "db").split(",") if c.strip()]
+    sim = _in("simulate-command")
+    if sim:
+        import shlex  # noqa: PLC0415
+        cfg.sim_command = shlex.split(sim)
+        t = _in("simulate-timeout")
+        cfg.sim_timeout = float(t) if t else cfg.sim_timeout
+        cfg.sim_env = [x.strip() for x in _in("simulate-env").replace(",", " ").split() if x.strip()]
+        if "sim" not in checks:
+            checks.append("sim")
     if checks == ["db"]:
         rep = analyze(cfg)
     else:
@@ -216,8 +230,8 @@ def _run() -> int:
 
     out_dir = os.path.join(os.environ.get("RUNNER_TEMP") or tempfile.gettempdir(), "dci")
     os.makedirs(out_dir, exist_ok=True)
-    paths = {"report-path": "report.md", "json-path": "report.json", "sarif-path": "dci.sarif"}
-    renderers = {"report-path": report.to_markdown, "json-path": report.to_json, "sarif-path": report.to_sarif}
+    paths = {"report-path": "report.md", "json-path": "report.json", "sarif-path": "dci.sarif", "html-path": "report.html"}
+    renderers = {"report-path": report.to_markdown, "json-path": report.to_json, "sarif-path": report.to_sarif, "html-path": _html}
     outputs: dict[str, str] = {}
     for key, fname in paths.items():
         p = os.path.join(out_dir, fname)

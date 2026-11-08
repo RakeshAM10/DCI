@@ -24,7 +24,7 @@ jobs:
       - id: sci
         uses: YOUR-ORG/sci@v1     # pin to a full commit SHA in production
         with:
-          checks: db,api,graphql,proto
+          checks: db,api,graphql,proto,deps,config
           # Optional production evidence (files already in the workspace, for example exported by a scheduled job):
           # runtime-queries: evidence/pg_stat_statements.csv
           # api-access-logs: evidence/access.log

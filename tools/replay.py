@@ -20,7 +20,7 @@ def main() -> int:
     ap.add_argument("--globs", help="comma-separated spec globs (default: the standard OpenAPI file names)")
     ns = ap.parse_args()
     cfg0 = Config(repo=ns.repo)
-    globs = ns.globs.split(",") if ns.globs else (cfg0.graphql_schema_globs if ns.checks == "graphql" else cfg0.api_spec_globs)
+    globs = ns.globs.split(",") if ns.globs else {"graphql": cfg0.graphql_schema_globs, "proto": cfg0.proto_globs}.get(ns.checks, cfg0.api_spec_globs)
     pats = [g.replace("**/", "") for g in globs]
     out = run_git(ns.repo, "log", "--format=%H", "--first-parent", "--", *[f":(glob)**/{p}" for p in pats]).decode().split()
     print(f"{len(out)} commits touched a spec", file=sys.stderr)
@@ -31,8 +31,9 @@ def main() -> int:
         except Exception:  # noqa: BLE001 - root commit
             continue
         cfg = Config(repo=ns.repo)
-        cfg.api_spec_globs = cfg.graphql_schema_globs = globs
+        cfg.api_spec_globs = cfg.graphql_schema_globs = cfg.proto_globs = globs
         cfg.base, cfg.head = sha + "^", sha
+        cfg.time_budget_seconds = float(__import__("os").environ.get("REPLAY_BUDGET", cfg.time_budget_seconds))
         t = time.time()
         try:
             rep = run_checks(cfg, ns.checks.split(","))

@@ -21,5 +21,9 @@ sci = "sci.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+sci = ["ui/*.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = [".", "src", "tests"]

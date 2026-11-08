@@ -42,6 +42,9 @@ class Config:
     graphql_schema_globs: list[str] = field(default_factory=lambda: list(DEFAULT_GRAPHQL_GLOBS))  # GraphQL SDL files (SCI)
     proto_globs: list[str] = field(default_factory=lambda: ["**/*.proto"])  # Protocol Buffers files (SCI)
     api_access_logs: list[str] = field(default_factory=list)  # access-log exports (operator supplied, never from .dci.toml)
+    sim_command: list[str] = field(default_factory=list)  # test command for `sim` (operator supplied, never from .dci.toml); {junit} = result file
+    sim_timeout: float = 1800.0  # seconds allowed per test run
+    sim_env: list[str] = field(default_factory=list)  # extra environment variable names passed through to the test command
     workspace: str | None = None  # if set, the repo and every consumer repository must be inside it (enforced in analyze)
     config_consumer_repos: list[tuple[str, str]] = field(default_factory=list)  # consumer repos named by a .dci.toml (untrusted origin)
     allow_outside_config_paths: bool = False  # without a workspace, config-file consumer paths must be inside the repo's parent dir

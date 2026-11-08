@@ -720,3 +720,72 @@ def test_demo_pr_is_blocked_by_every_check_through_the_action(tmp_path, github):
     for rule in ("DCI101", "API101", "GQL101", "PRT101", "PRT111"):
         assert f"title={rule}" in p.stdout or rule in summary.read_text(), rule
     assert outputs["verdict"] == "fail" and int(outputs["blocking-count"]) >= 5
+
+
+def test_partial_clone_works_without_downloading_every_blob_for_sizes(tmp_path):
+    """`git ls-tree -l` fetches all blobs in a --filter=blob:none clone (minutes on a monorepo); GitTree must not use it there."""
+    r = make_repo(tmp_path, {"openapi.yaml": SPEC, **CODE}, {"openapi.yaml": SPEC_NEW})
+    for k, v in (("uploadpack.allowFilter", "true"), ("uploadpack.allowAnySHA1InWant", "true")):
+        _git(r, "config", k, v)
+    clone = str(tmp_path / "partial")
+    subprocess.run(["git", "clone", "-q", "--filter=blob:none", "--no-checkout", f"file://{r}", clone], check=True, capture_output=True)
+    _git(clone, "checkout", "-q", "feat")
+    _git(clone, "branch", "-f", "main", "origin/main")
+    from dci import gitutil
+    assert gitutil.is_partial_clone(clone) and not gitutil.is_partial_clone(r)
+    cfg = _cfg(clone, head="feat")
+    rep = run_checks(cfg, ["api"])
+    assert by_rule(rep)["API101"][0].confidence.value == "confirmed"
+    assert {e.file for e in by_rule(rep)["API101"][0].evidence} == {"svc/cleanup.py", "web/api.ts"}
+
+
+def test_gittree_enforces_the_size_limit_at_read_time_and_stays_in_sync(tmp_path):
+    from dci.sources import GitTree
+    r = make_repo(tmp_path, {"big.txt": "x" * 5000, "small.txt": "ok\n", "z.txt": "last\n"}, {"z.txt": "last2\n"})
+    sha = subprocess.run(["git", "-C", r, "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    t = GitTree(r, sha, "head", max_bytes=1000)
+    t._sizes_known = False  # as in a partial clone: sizes are not listed up front
+    for k, (oid, _) in list(t._entries.items()):
+        t._entries[k] = (oid, 0)
+    assert t.read("big.txt") is None and t.read("small.txt") == "ok\n" and t.read("z.txt") == "last2\n"
+    t.close()
+
+
+# ---- iOS-style HTML report -------------------------------------------------
+
+def _real_json_report(tmp_path):
+    r = make_repo(tmp_path, {"hello.proto": GREETER}, {"hello.proto": GREETER.replace("string name = 1;", "string name = 5;")})
+    out = tmp_path / "r.json"
+    from sci import cli as sci_cli
+    assert sci_cli.main(["--repo", r, "--base", "HEAD~1", "--head", "HEAD", "--format", "json", "--output", str(out)]) == 1
+    return out
+
+
+def test_html_report_embeds_the_real_report_and_loads_nothing_from_the_network(tmp_path):
+    import json, re
+    from sci import cli as sci_cli
+    js = _real_json_report(tmp_path)
+    from sci.htmlreport import render
+    page = render(js.read_text())
+    m = re.search(r'<script id="sci-data" type="application/json">(.*?)</script>', page, re.S)
+    assert json.loads(m.group(1))["blocking_count"] == json.loads(js.read_text())["blocking_count"] >= 1
+    assert not re.search(r'(src|href)\s*=\s*["\']https?:', page) and "default-src 'none'" in page
+
+
+def test_html_embedding_cannot_break_out_of_the_script_tag():
+    import json, re
+    from sci.htmlreport import render
+    evil = '</script><img src=x onerror=alert(1)><!--   &amp;'
+    page = render(json.dumps({"findings": [{"title": evil, "evidence": [{"snippet": evil}]}]}))
+    body = re.search(r'<script id="sci-data" type="application/json">(.*?)</script>', page, re.S).group(1)
+    assert "<" not in body and ">" not in body and " " not in body
+    assert json.loads(body)["findings"][0]["title"] == evil  # round-trips exactly, as data
+    assert page.count("</script>") == 2  # data script + app script only
+
+
+def test_sci_ui_rejects_a_file_that_is_not_a_report(tmp_path, capsys):
+    from sci import cli as sci_cli
+    bad = tmp_path / "x.json"
+    bad.write_text('{"hello": 1}')
+    assert sci_cli.main(["ui", str(bad), "--no-open"]) == 2
+    assert "not an SCI report" in capsys.readouterr().err

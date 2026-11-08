@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
+<meta name="color-scheme" content="light dark">
+<title>SCI Report</title>
+<style>
+:root{--bg:#f2f2f7;--card:#fff;--label:#000;--label2:rgba(60,60,67,.6);--label3:rgba(60,60,67,.3);--sep:rgba(60,60,67,.18);--fill:rgba(120,120,128,.12);
+--seg:#fff;--blue:#007aff;--red:#ff3b30;--orange:#ff9500;--green:#34c759;--gray:#8e8e93;--mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+--font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif}
+@media(prefers-color-scheme:dark){:root{--bg:#000;--card:#1c1c1e;--label:#fff;--label2:rgba(235,235,245,.6);--label3:rgba(235,235,245,.3);--sep:rgba(84,84,88,.65);--fill:rgba(120,120,128,.24);
+--seg:#636366;--blue:#0a84ff;--red:#ff453a;--orange:#ff9f0a;--green:#30d158;--gray:#98989d}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--label);font:17px/1.35 var(--font);-webkit-font-smoothing:antialiased}
+.bar{position:sticky;top:0;z-index:5;background:color-mix(in srgb,var(--bg) 78%,transparent);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);border-bottom:.5px solid var(--sep);padding:calc(10px + env(safe-area-inset-top)) 16px 10px}
+.bar .in{max-width:760px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.bar h2{margin:0;font-size:17px;font-weight:600}
+.btn{border:0;background:none;color:var(--blue);font:inherit;cursor:pointer;padding:4px 0}
+.btn:focus-visible,.row:focus-visible,.seg button:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:8px}
+main{max-width:760px;margin:0 auto;padding:8px 16px calc(40px + env(safe-area-inset-bottom))}
+h1{font-size:34px;line-height:1.1;font-weight:700;letter-spacing:.2px;margin:18px 0 4px}
+.sub{color:var(--label2);font-size:15px;margin:0 0 16px;overflow-wrap:anywhere}
+.hero{background:var(--card);border-radius:14px;padding:18px;display:flex;gap:14px;align-items:center;margin-bottom:12px}
+.dot{flex:none;width:44px;height:44px;border-radius:50%;display:grid;place-items:center;color:#fff;font-size:24px;font-weight:700}
+.hero b{display:block;font-size:20px;font-weight:600}.hero span{color:var(--label2);font-size:15px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:8px}
+.stat{background:var(--card);border-radius:14px;padding:12px 14px}
+.stat b{display:block;font-size:28px;font-weight:700;line-height:1.1}.stat span{color:var(--label2);font-size:13px}
+.seg{display:flex;background:var(--fill);border-radius:9px;padding:2px;margin:18px 0 8px}
+.seg button{flex:1;border:0;background:none;color:var(--label);font:600 13px var(--font);padding:6px 4px;border-radius:7px;cursor:pointer}
+.seg button[aria-pressed=true]{background:var(--seg);box-shadow:0 1px 3px rgba(0,0,0,.18)}
+.sect{color:var(--label2);font-size:13px;text-transform:uppercase;letter-spacing:.3px;margin:22px 16px 6px}
+.list{background:var(--card);border-radius:12px;overflow:hidden}
+.row{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;width:100%;text-align:left;border:0;background:none;color:inherit;font:inherit;cursor:pointer;position:relative}
+.row+.row::before{content:"";position:absolute;top:0;left:16px;right:0;border-top:.5px solid var(--sep)}
+.row:active{background:var(--fill)}
+.pill{flex:none;width:10px;height:10px;border-radius:50%;margin-top:7px}
+.rt{flex:1;min-width:0}.rt b{display:block;font-weight:500;overflow-wrap:anywhere}
+.rt small{display:block;color:var(--label2);font-size:14px;overflow-wrap:anywhere}
+.tag{font:600 11px var(--font);padding:2px 7px;border-radius:99px;color:#fff;margin-left:6px;vertical-align:2px;white-space:nowrap}
+.chev{color:var(--label3);align-self:center;font-size:20px;transition:transform .2s}
+.row[aria-expanded=true] .chev{transform:rotate(90deg)}
+.detail{padding:0 16px 14px 38px;font-size:15px;display:none}
+.detail.open{display:block}
+.detail p{margin:6px 0;overflow-wrap:anywhere}
+.ev{font:12.5px/1.4 var(--mono);background:var(--fill);border-radius:8px;padding:8px 10px;margin:6px 0;overflow-x:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+.ev i{font-style:normal;color:var(--blue);display:block;margin-bottom:2px}
+.ai{border-left:3px solid var(--blue);padding-left:10px;margin:8px 0}
+.empty{text-align:center;color:var(--label2);padding:36px 16px}
+.drop{margin:40px 0;background:var(--card);border-radius:14px;padding:36px 20px;text-align:center}
+.drop.over{outline:2px dashed var(--blue)}
+.drop p{color:var(--label2);margin:8px 0 16px}
+.prim{background:var(--blue);color:#fff;border:0;border-radius:12px;font:600 17px var(--font);padding:12px 22px;cursor:pointer}
+.err{color:var(--red);margin-top:14px}
+.foot{color:var(--label2);font-size:13px;margin:22px 16px 0}
+@media(max-width:480px){h1{font-size:30px}.stat b{font-size:24px}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="bar"><div class="in"><h2 id="bt">SCI</h2><button class="btn" id="open" hidden>Open report…</button></div></div>
+<main id="app"></main>
+<input type="file" id="file" accept=".json,application/json" hidden>
+<script id="sci-data" type="application/json">__SCI_DATA__</script>
+<script>
+"use strict";
+var COLORS={confirmed:"var(--red)",possible:"var(--orange)",unknown:"var(--gray)"};
+var app=document.getElementById("app"),state={filter:"all"};
+function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=String(x);return e}
+function add(p){for(var i=1;i<arguments.length;i++)if(arguments[i])p.appendChild(arguments[i]);return p}
+function loc(f){return f.file?f.file+(f.line?":"+f.line:""):""}
+function verdictOf(r){
+  var b=r.blocking_count||0;
+  if(b>0)return{c:"var(--red)",g:"!",t:"Blocked",s:b+" confirmed breaking change"+(b===1?"":"s")+" must be fixed before merge."};
+  if((r.findings||[]).some(function(f){return f.confidence!=="confirmed"&&f.severity!=="info"}))return{c:"var(--orange)",g:"?",t:"Needs review",s:"Nothing is proven breaking, but some changes could not be verified."};
+  return{c:"var(--green)",g:"✓",t:"Safe to merge",s:"No breaking changes found by these checks."};
+}
+function render(r){
+  app.textContent="";document.getElementById("bt").textContent=r.title||"SCI report";
+  document.getElementById("open").hidden=false;
+  var fs=r.findings||[],v=verdictOf(r);
+  add(app,el("h1",0,r.title||"SCI change check"),el("p","sub",r.headline||fs.length+" finding"+(fs.length===1?"":"s")));
+  var h=el("div","hero"),d=el("div","dot",v.g);d.style.background=v.c;
+  var hb=el("div");add(hb,el("b",0,v.t),el("span",0,v.s));add(h,d,hb);app.appendChild(h);
+  var n={confirmed:0,possible:0,unknown:0};fs.forEach(function(f){if(n[f.confidence]!=null)n[f.confidence]++});
+  var st=el("div","stats");
+  [["Confirmed",n.confirmed,"var(--red)"],["Possible",n.possible,"var(--orange)"],["Unknown",n.unknown,"var(--gray)"]].forEach(function(s){
+    var c=el("div","stat"),b=el("b",0,s[1]);b.style.color=s[1]?s[2]:"var(--label)";add(c,b,el("span",0,s[0]));st.appendChild(c)});
+  app.appendChild(st);
+  var seg=el("div","seg");seg.setAttribute("role","group");seg.setAttribute("aria-label","Filter findings");
+  [["all","All"],["confirmed","Confirmed"],["possible","Possible"],["unknown","Unknown"]].forEach(function(o){
+    var b=el("button",0,o[1]);b.setAttribute("aria-pressed",state.filter===o[0]);
+    b.onclick=function(){state.filter=o[0];render(r)};seg.appendChild(b)});
+  app.appendChild(seg);
+  var shown=fs.filter(function(f){return state.filter==="all"||f.confidence===state.filter});
+  if(!shown.length)app.appendChild(el("div","empty","No findings in this view."));
+  else{var list=el("div","list");shown.forEach(function(f,i){list.appendChild(item(f,i))});app.appendChild(list)}
+  var cov=r.coverage||{},bits=[];
+  if(cov.scan_incomplete)bits.push("Scan stopped early: "+(cov.files_not_scanned||0)+" file(s) were not read, so callers may be missing.");
+  if(cov.trees_scanned&&cov.trees_scanned.length)bits.push("Trees scanned: "+cov.trees_scanned.join(", ")+".");
+  if(cov.python_files_parsed)bits.push(cov.python_files_parsed+" Python file(s) parsed.");
+  (cov.notes||[]).forEach(function(x){bits.push(x)});
+  (r.issues||[]).forEach(function(x){bits.push("Could not interpret "+x.file+":"+x.line+" — "+x.message)});
+  if(bits.length){app.appendChild(el("div","sect","Coverage"));var cl=el("div","list");
+    bits.forEach(function(b){var row=el("div","row");row.style.cursor="default";var rt=el("div","rt");rt.appendChild(el("small",0,b));row.appendChild(rt);cl.appendChild(row)});app.appendChild(cl)}
+  app.appendChild(el("p","foot","Only confirmed findings can block a merge. Every finding links to the code that proves it. Version "+(r.version||"?")+"."));
+}
+function item(f,i){
+  var w=el("div"),row=el("button","row");row.setAttribute("aria-expanded","false");
+  var p=el("span","pill");p.style.background=COLORS[f.confidence]||"var(--gray)";
+  var rt=el("div","rt"),b=el("b",0,f.title||f.rule_id),t=el("span","tag",f.rule_id);t.style.background=COLORS[f.confidence]||"var(--gray)";b.appendChild(t);
+  add(rt,b,el("small",0,[f.confidence,f.severity,loc(f)].filter(Boolean).join(" · ")));
+  add(row,p,rt,el("span","chev","›"));
+  var d=el("div","detail");d.id="d"+i;row.setAttribute("aria-controls",d.id);
+  d.appendChild(el("p",0,f.message||""));
+  if(f.evidence&&f.evidence.length){
+    d.appendChild(el("p",0,"Evidence ("+f.evidence.length+" of "+(f.total_evidence||f.evidence.length)+" shown)"));
+    f.evidence.forEach(function(e){var x=el("div","ev");x.appendChild(el("i",0,e.file+":"+e.line+"  ["+e.tree+(e.is_test?", test":"")+"]"));x.appendChild(document.createTextNode(e.snippet||e.note||""));d.appendChild(x)})}
+  if(f.recommendation&&f.recommendation.length){d.appendChild(el("p",0,"What to do"));f.recommendation.forEach(function(x){d.appendChild(el("p",0,"• "+x))})}
+  if(f.ai){var a=el("div","ai");add(a,el("p",0,"AI note (advisory, never changes the verdict): "+f.ai.verdict),el("p",0,f.ai.summary));d.appendChild(a)}
+  row.onclick=function(){var o=d.classList.toggle("open");row.setAttribute("aria-expanded",o)};
+  return add(w,row,d);
+}
+function landing(msg){
+  app.textContent="";document.getElementById("open").hidden=true;
+  var d=el("div","drop");add(d,el("h1",0,"SCI Report"),el("p",0,"Open the JSON produced by  sci --format json. It is read in this browser and never uploaded."));
+  var b=el("button","prim","Choose report…");b.onclick=function(){document.getElementById("file").click()};d.appendChild(b);
+  if(msg)d.appendChild(el("div","err",msg));
+  ["dragover","dragenter"].forEach(function(t){d.addEventListener(t,function(e){e.preventDefault();d.classList.add("over")})});
+  ["dragleave","drop"].forEach(function(t){d.addEventListener(t,function(){d.classList.remove("over")})});
+  d.addEventListener("drop",function(e){e.preventDefault();if(e.dataTransfer.files[0])load(e.dataTransfer.files[0])});
+  app.appendChild(d);
+}
+function valid(r){return r&&typeof r==="object"&&!Array.isArray(r)&&Array.isArray(r.findings)}
+function load(file){
+  if(file.size>100e6)return landing("That file is too large to be a report.");
+  var rd=new FileReader();rd.onload=function(){try{var r=JSON.parse(rd.result);valid(r)?(state.filter="all",render(r)):landing("That file is not an SCI report (no findings list).")}catch(e){landing("That file is not valid JSON.")}};
+  rd.onerror=function(){landing("The file could not be read.")};rd.readAsText(file);
+}
+document.getElementById("open").onclick=function(){document.getElementById("file").click()};
+document.getElementById("file").onchange=function(e){if(e.target.files[0])load(e.target.files[0]);e.target.value=""};
+(function(){
+  var raw=document.getElementById("sci-data").textContent.trim();
+  if(raw&&raw!=="__SCI_DATA__"){try{var r=JSON.parse(raw);if(valid(r))return render(r)}catch(e){}landing("The embedded report could not be read.")}else landing();
+})();
+</script>
+</body>
+</html>

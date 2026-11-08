@@ -174,7 +174,7 @@ def scan_tree(tree: Tree, matchers: list[OpMatcher], tree_name: str, test_match:
         text = tree.read(path)
         if text is None:
             continue
-        total += size
+        total += size or len(text)
         if "\0" in text[:1000] or (prefilter is not None and not prefilter.search(text)):
             continue
         files += 1

@@ -38,11 +38,23 @@ inputs:
     required: false
     default: ""
   checks:
-    description: "Comma-separated checks to run: db (database migrations), api (OpenAPI / Swagger contract changes), graphql (GraphQL schema changes), proto (gRPC / Protocol Buffers). Default: db,api,graphql,proto."
+    description: "Comma-separated checks to run: db (database migrations), api (OpenAPI / Swagger contract changes), graphql (GraphQL schema changes), proto (gRPC / Protocol Buffers), deps (dependency manifests), config (environment variables). Default: db,api,graphql,proto,deps,config."
     required: false
-    default: "db,api,graphql,proto"
+    default: "db,api,graphql,proto,deps,config"
   api-access-logs:
     description: "Comma- or newline-separated access-log files (inside the workspace) used as runtime evidence for API changes (JSON, JSON Lines, CSV or Common Log Format)."
+    required: false
+    default: ""
+  simulate-command:
+    description: "Pre-release simulation: a test command, run on the base revision and on the pull request, with {junit} where the runner writes JUnit XML (e.g. 'python -m pytest -q --junitxml={junit}'). Executes repository code with a scrubbed environment; leave empty to disable."
+    required: false
+    default: ""
+  simulate-timeout:
+    description: "Seconds allowed for each simulation test run."
+    required: false
+    default: "1800"
+  simulate-env:
+    description: "Space- or comma-separated environment variable names passed to the simulation command (everything else, including tokens, is removed)."
     required: false
     default: ""
   runtime-queries:
@@ -95,6 +107,9 @@ outputs:
   json-path:
     description: "JSON report file."
     value: ${{ steps.dci.outputs.json-path }}
+  html-path:
+    description: "Path of the iOS-style HTML report (self-contained; upload it as a build artifact)."
+    value: ${{ steps.dci.outputs.html-path }}
   sarif-path:
     description: "SARIF 2.1.0 file (for github/codeql-action/upload-sarif)."
     value: ${{ steps.dci.outputs.sarif-path }}
@@ -128,6 +143,9 @@ runs:
         INPUT_AI_ASSIST: ${{ inputs.ai-assist }}
         INPUT_CHECKS: ${{ inputs.checks }}
         INPUT_API_ACCESS_LOGS: ${{ inputs.api-access-logs }}
+        INPUT_SIMULATE_COMMAND: ${{ inputs.simulate-command }}
+        INPUT_SIMULATE_TIMEOUT: ${{ inputs.simulate-timeout }}
+        INPUT_SIMULATE_ENV: ${{ inputs.simulate-env }}
         INPUT_RUNTIME_QUERIES: ${{ inputs.runtime-queries }}
         INPUT_RUNTIME_BLOCKS: ${{ inputs.runtime-blocks }}
         INPUT_AI_MODEL: ${{ inputs.ai-model }}

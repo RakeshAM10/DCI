@@ -49,6 +49,14 @@ def is_repo(path: str) -> bool:
         return False
 
 
+def is_partial_clone(repo: str) -> bool:
+    try:
+        out = run_git(repo, "config", "--get-regexp", r"^(remote\..*\.(promisor|partialclonefilter)|extensions\.partialclone)$")
+    except GitError:
+        return False
+    return bool(out.strip())
+
+
 def rev_sha(repo: str, rev: str) -> str:
     return run_git(repo, "rev-parse", "--verify", "--quiet", check_rev(rev) + "^{commit}").decode().strip()
 

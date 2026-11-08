@@ -12,7 +12,7 @@ Every finding is classified as `CONFIRMED`, `POSSIBLE`, or `UNKNOWN`. **Only con
 
 ---
 
-## The 5 Change Intelligence Engines
+## The 8 Change Intelligence Engines
 
 | Check | Flag | What It Scans | Proof of Breakage | Can It Block? |
 | :--- | :--- | :--- | :--- | :---: |
@@ -20,6 +20,9 @@ Every finding is classified as `CONFIRMED`, `POSSIBLE`, or `UNKNOWN`. **Only con
 | **REST / OpenAPI** | `api` | OpenAPI 3.x and Swagger 2.0 (`.yaml`, `.json`) | Real client callers in Python, TypeScript, Go, cURL | **Yes** (`API101`) |
 | **GraphQL SDL** | `graphql` | `.graphql`, `.gql`, inline `gql` code templates | Parsed client operation documents (`queries`, `mutations`) | **Yes** (`GQL101`, `GQL104`) |
 | **gRPC / Protobuf** | `proto` | Protocol Buffers files (`.proto`) | Wire-incompatible tag changes & cross-service RPC callers | **Yes** (`PRT101`, `PRT111`) |
+| **Dependencies** | `deps` | `package.json`, `requirements.txt`, `pyproject.toml`, `go.mod` | Removed dependencies still imported by active code | **Yes** (`DEP101`) |
+| **Environment & Config** | `config` | `docker-compose.yml`, K8s manifests, `Dockerfile ENV`, `.env` | Removed deployment env vars still read via `os.environ["VAR"]` | **Yes** (`CFG101`) |
+| **Pre-Release Simulation** | `sim` | Real test suite executed in isolated throwaway worktrees | Regression tests that passed on base and fail on head | **Yes** (`SIM101`) |
 | **Runtime Evidence** | `--runtime-queries` `--api-access-log` | `pg_stat_statements` exports & HTTP access logs | Real queries/requests captured in production traffic | **Yes** (with `--runtime-blocks`) |
 
 ---
@@ -56,11 +59,20 @@ jobs:
       - id: sci
         uses: RakeshAM10/SCI@v1    # Pin to a full commit SHA in production
         with:
-          checks: db,api,graphql,proto
+          checks: db,api,graphql,proto,deps,config
+          # Optional pre-release simulation (runs your test suite in isolated worktrees):
+          # simulate-command: "python -m pytest -q --junitxml={junit}"
           # Optional production runtime evidence:
           # runtime-queries: evidence/pg_stat_statements.csv
           # api-access-logs: evidence/access.log
           # runtime-blocks: "false"  # Set "true" to treat production traffic as blocking
+
+      - name: Upload HTML Report Artifact
+        if: always() && steps.sci.outputs.html-path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: sci-report
+          path: ${{ steps.sci.outputs.html-path }}
 
       - name: Upload SARIF to GitHub Code Scanning
         if: always() && steps.sci.outputs.sarif-path != ''
@@ -75,7 +87,9 @@ jobs:
 
 | Input | Default | Meaning |
 |---|---|---|
-| `checks` | `db,api,graphql,proto` | Comma-separated checks to run |
+| `checks` | `db,api,graphql,proto,deps,config` | Comma-separated checks to run |
+| `simulate-command` | empty | Pre-release test command with `{junit}` XML result path (opt-in `sim` check) |
+| `simulate-timeout` | `1800` | Seconds allowed per simulation test run |
 | `base-ref` | PR target branch | Base branch to compare against (e.g. `origin/main`) |
 | `consumer-repos` | empty | `NAME=PATH` entries for external microservice repos |
 | `fail-on` | `error` | Severity threshold: `error`, `warning`, or `never` |
@@ -87,7 +101,30 @@ jobs:
 | `comment` | `true` | Posts/updates a single clean, collapsible PR summary comment |
 | `github-token` | `github.token` | Token used to publish PR comment and check annotations |
 
-**Action Outputs:** `verdict` (`pass`, `warn`, `fail`), `blocking-count`, `report-path`, `json-path`, `sarif-path`.
+**Action Outputs:** `verdict` (`pass`, `warn`, `fail`), `blocking-count`, `report-path`, `json-path`, `html-path`, `sarif-path`.
+
+---
+
+## Interactive Visual Interface (`sci ui`) & HTML Reports
+
+SCI comes with a built-in, standalone visual dashboard:
+
+```bash
+# Launch the interactive web inspector in your browser:
+sci ui report.json
+
+# Launch empty UI and drag-and-drop any report file:
+sci ui
+```
+
+* **Zero external network dependencies:** All styling and JavaScript are inline with strict Content Security Policy (`default-src 'none'`).
+* **Auto Dark/Light mode:** Matches your system preference seamlessly.
+* **Filter & Accordion View:** Instantly toggle findings by confidence (*Confirmed*, *Possible*, *Unknown*) and click to reveal code snippets and mitigation advice.
+
+You can also export self-contained HTML files directly:
+```bash
+sci --repo . --base origin/main --format html --output report.html
+```
 
 ---
 
@@ -155,6 +192,27 @@ Compiles `.proto` revisions via `grpc_tools.protoc` into real descriptor sets.
 - **PRT102 (Warning):** Removed RPC called only from test files.
 - **PRT112 (Warning, Possible):** Unreserved field numbers or names removed without `reserved` declaration.
 
+### 5. Dependency Manifests (`deps`)
+Scans package manifests (`package.json`, `requirements.txt`, `pyproject.toml`, `go.mod`).
+
+- **DEP101 (Error, Confirmed):** Removed dependency is still imported by active code at head (causes runtime `ImportError`).
+- **DEP102 (Warning, Possible):** Major-version dependency upgrade detected (may introduce breaking upstream changes).
+- **DEP103 (Info, Unknown):** Dependency removed with no active code imports detected.
+
+### 6. Deployment Configuration & Env (`config`)
+Scans deployment declarations (`docker-compose.yml`, Kubernetes env, `Dockerfile ENV`, `.env` files) against environment variable reads in code.
+
+- **CFG101 (Error, Confirmed):** Removed variable from deployment while code still reads `os.environ["VAR"]` without a default value.
+- **CFG102 (Warning, Possible):** Code introduces new required `os.environ["VAR"]` without a declaration or fallback.
+
+### 7. Pre-Release Simulation (`sim`)
+Executes the project's own test suite in clean, isolated throwaway Git worktrees with scrubbed environments.
+
+- **SIM101 (Error, Confirmed):** Test that passed on base revision fails on the pull request (verified twice to rule out flakiness).
+- **SIM102 (Warning, Confirmed):** A new test added by the pull request fails.
+- **SIM103 (Warning, Possible):** Flaky test detected (failed once, passed on re-run).
+- **SIM901 / SIM902 (Warning, Unknown):** Test suite failed to produce JUnit results or timed out.
+
 ---
 
 ## Production Runtime Evidence
@@ -205,7 +263,7 @@ python tools/replay.py . --max 50 --checks graphql
 
 ## Development & Testing
 
-Run the full automated test suite (229 tests across PostgreSQL ground truth, AST scale repos, OpenAPI, GraphQL, and Protobuf):
+Run the full automated test suite (250+ tests across PostgreSQL ground truth, AST scale repos, OpenAPI, GraphQL, Protobuf, Dependencies, Configuration, and Worktree Simulation):
 
 ```bash
 # Setup environment

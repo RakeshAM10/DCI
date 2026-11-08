@@ -26,7 +26,7 @@ def _parser() -> argparse.ArgumentParser:
     a.add_argument("--allow-outside-config-paths", action="store_true", help="allow consumer repositories named in .dci.toml to live outside the repository's parent directory")
     a.add_argument("--config", help="path to .dci.toml (default: <repo>/.dci.toml if present)")
     a.add_argument("--workspace", help="reject the repository and every consumer repository (from flags or .dci.toml) that resolves outside this directory")
-    a.add_argument("--format", choices=["text", "markdown", "json", "sarif"], default="text")
+    a.add_argument("--format", choices=["text", "markdown", "json", "sarif", "html"], default="text")
     a.add_argument("--output", help="write the report to a file instead of stdout")
     a.add_argument("--fail-on", choices=["error", "warning", "never"], help="severity at which CONFIRMED findings fail the run")
     a.add_argument("--no-rolling-deploy", action="store_true", help="do not treat old-version/new-schema overlap as an error")
@@ -104,7 +104,11 @@ def main(argv: list[str] | None = None, runner=None) -> int:
         except Exception as e:  # noqa: BLE001 - advisory only
             print(f"dci: warning: AI assistance failed: {e.__class__.__name__}", file=sys.stderr)
 
-    rendered = {"text": report.to_text, "markdown": report.to_markdown, "json": report.to_json, "sarif": report.to_sarif}[ns.format](rep)
+    fmts = {"text": report.to_text, "markdown": report.to_markdown, "json": report.to_json, "sarif": report.to_sarif}
+    if ns.format == "html":
+        from sci.htmlreport import to_html
+        fmts["html"] = to_html
+    rendered = fmts[ns.format](rep)
     if ns.output:
         with open(ns.output, "w", encoding="utf-8") as fh:
             fh.write(rendered)

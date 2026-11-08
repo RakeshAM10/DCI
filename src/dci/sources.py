@@ -50,6 +50,7 @@ class Matcher:
 
 class Tree:
     name: str
+    parallel_safe = False  # True when read() may be called from forked worker processes
 
     def files(self) -> Iterator[tuple[str, int]]:  # pragma: no cover - interface
         raise NotImplementedError
@@ -66,6 +67,8 @@ def _excluded(parts: list[str]) -> bool:
 
 
 class FsTree(Tree):
+    parallel_safe = True
+
     def __init__(self, root: str, name: str, max_bytes: int = MAX_FILE_BYTES):
         self.root = os.path.realpath(root)
         self.name = name
@@ -112,16 +115,20 @@ class GitTree(Tree):
 
     def __init__(self, repo: str, sha: str, name: str, max_bytes: int = MAX_FILE_BYTES):
         self.repo, self.sha, self.name, self.max_bytes = repo, sha, name, max_bytes
-        raw = gitutil.run_git(repo, "ls-tree", "-r", "-z", "-l", sha)
+        # In a partial clone `ls-tree -l` fetches every blob just to print sizes (minutes on a large monorepo): skip it and enforce the
+        # size limit when a file is read instead.
+        self._sizes_known = not gitutil.is_partial_clone(repo)
+        raw = gitutil.run_git(repo, "ls-tree", "-r", "-z", *(["-l"] if self._sizes_known else []), sha)
         self._entries: dict[str, tuple[str, int]] = {}
         for rec in raw.split(b"\0"):
             if not rec:
                 continue
             meta, _, path = rec.partition(b"\t")
             fields = meta.split()
-            if len(fields) < 4:
+            if len(fields) < (4 if self._sizes_known else 3):
                 continue
-            mode, typ, blob, size = fields[0], fields[1], fields[2], fields[3]
+            mode, typ, blob = fields[0], fields[1], fields[2]
+            size = fields[3] if self._sizes_known and len(fields) > 3 else b"0"
             if typ != b"blob" or mode in (b"120000", b"160000"):
                 continue
             p = path.decode("utf-8", "replace")
@@ -154,6 +161,14 @@ class GitTree(Tree):
         if len(header) < 3 or header[1] != b"blob":
             return None
         size = int(header[2])
+        if size > self.max_bytes:  # unknown until now in a partial clone: drain the content, keep the stream in sync
+            left = size + 1
+            while left > 0:
+                chunk = proc.stdout.read(min(left, 1 << 20))
+                if not chunk:
+                    break
+                left -= len(chunk)
+            return None
         data = proc.stdout.read(size)
         proc.stdout.read(1)
         return data.decode("utf-8", "replace")
