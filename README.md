@@ -153,7 +153,7 @@ Callers are found in **any language** by matching string literals (and bare URLs
 
 **Not covered yet:** gRPC/AsyncAPI, `oneOf`/`anyOf` bodies (not compared, to avoid guessing), changed authentication requirements, and callers that build URLs from several variables.
 
-GitHub Action: `checks: db,api,graphql` (default) and `api-access-logs`.
+GitHub Action: `checks: db,api,graphql,proto` (default) and `api-access-logs`.
 
 ### Validating on your own history
 
@@ -175,3 +175,23 @@ GraphQL clients name every field they use, so this check can *prove* breaks. It 
 | GQL902 | a schema could not be built or parsed | no (UNKNOWN) |
 
 Test files (`__tests__`, `*.spec.*`, `*.test.*`, `src/test`, ...) are recognised by `test_globs`. Limits: operations built by string concatenation, persisted queries and generated clients that no longer contain the query text cannot be seen; a schema split between unchanged code strings and `.graphql` files may fail to build (reported as GQL902, never silently passed).
+
+## SCI: gRPC / Protocol Buffers checks (`--checks proto`)
+
+Each revision's `.proto` files are compiled with the real `protoc` (grpcio-tools) into descriptors, so nested types, oneof, maps and imports are parsed exactly. Files whose imports are not in the repository are left out and listed in the coverage notes (never guessed).
+
+| Rule | Meaning | Can it block? |
+|---|---|---|
+| PRT111 | wire-incompatible change: field number changed, incompatible field type, singular/repeated switch, new proto2 `required` field, enum number changed, RPC request/response/streaming changed | yes, CONFIRMED (the contract itself breaks every deployed peer; no caller needs to be found) |
+| PRT101 | removed RPC that code still calls (`stub.Method(` in a file that also uses the service name, or the `/pkg.Service/Method` path) | yes, CONFIRMED |
+| PRT102 / PRT103 / PRT105 | removed RPC called only from tests / possibly called (method name shared with another service) / no caller visible | no |
+| PRT112 | risky: field or enum value removed without `reserved`, message removed, rename, same-wire type change (int32 to int64, string to bytes) | no (POSSIBLE) |
+| PRT902 | the .proto files could not be compiled | no (UNKNOWN) |
+
+Generated code (`*_pb2*.py`, `*.pb.go`, `*Grpc.java`, ...) and server implementations are never counted as callers. Limits: callers are matched by name, not by type; HTTP/JSON transcoding annotations are not compared.
+
+## Trying SCI on a real pull request
+
+1. Publish this repository and use it as an action: `uses: YOUR-ORG/sci@<full commit SHA>` (see `examples/workflows/sci.yml`).
+2. `tools/demo_pr.sh YOUR-ORG/sci@<sha>` opens a private demo repository with a real pull request that breaks the database, the REST API, GraphQL and gRPC; the `SCI` check should fail with 5 blocking findings and post a PR comment. Delete the demo with `gh repo delete`.
+3. `.github/workflows/selftest.yml` runs the same scenario on a GitHub runner on every push and fails if any of the five expected findings is missing.

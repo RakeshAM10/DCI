@@ -5,9 +5,9 @@ from dci.analyze import analyze
 from dci.config import Config, ConfigError
 from dci.models import Coverage, Report
 
-from . import __version__, check_api, check_graphql
+from . import __version__, check_api, check_graphql, check_proto
 
-ALL_CHECKS = ("db", "api", "graphql")
+ALL_CHECKS = ("db", "api", "graphql", "proto")
 
 
 def run_checks(cfg: Config, checks: list[str] | tuple[str, ...] = ALL_CHECKS) -> Report:
@@ -23,6 +23,8 @@ def run_checks(cfg: Config, checks: list[str] | tuple[str, ...] = ALL_CHECKS) ->
         rep.findings.extend(check_api.run(cfg, rep.coverage))
     if "graphql" in checks:
         rep.findings.extend(check_graphql.run(cfg, rep.coverage))
+    if "proto" in checks:
+        rep.findings.extend(check_proto.run(cfg, rep.coverage))
     rep.title = "SCI change check"
     n_db = len(rep.changes)
     from dci.report import _counts  # noqa: PLC0415 - avoid a module cycle at import time

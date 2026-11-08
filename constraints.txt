@@ -2,3 +2,6 @@
 sqlglot==30.29.0
 PyYAML==6.0.3
 graphql-core==3.2.14
+grpcio-tools==1.85.1
+protobuf==7.36.1
+grpcio==1.85.1

@@ -38,9 +38,9 @@ inputs:
     required: false
     default: ""
   checks:
-    description: "Comma-separated checks to run: db (database migrations), api (OpenAPI / Swagger contract changes), graphql (GraphQL schema changes). Default: db,api,graphql."
+    description: "Comma-separated checks to run: db (database migrations), api (OpenAPI / Swagger contract changes), graphql (GraphQL schema changes), proto (gRPC / Protocol Buffers). Default: db,api,graphql,proto."
     required: false
-    default: "db,api,graphql"
+    default: "db,api,graphql,proto"
   api-access-logs:
     description: "Comma- or newline-separated access-log files (inside the workspace) used as runtime evidence for API changes (JSON, JSON Lines, CSV or Common Log Format)."
     required: false

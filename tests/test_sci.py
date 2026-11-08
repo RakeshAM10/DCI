@@ -622,3 +622,101 @@ def test_default_test_globs_cover_common_js_java_go_layouts():
         assert m(p), p
     for p in ("src/schema/film.js", "svc/contest.py", "web/latest.ts"):
         assert not m(p), p
+
+
+# ---------------------------------------------------------------- gRPC / Protocol Buffers (real protoc; tests/data/route_guide.proto is grpc-go's example)
+
+RG = os.path.join(os.path.dirname(__file__), "data", "route_guide.proto")
+GREETER = 'syntax = "proto3";\npackage hello;\nservice Greeter {\n  rpc SayHello (Req) returns (Rep) {}\n  rpc Bye (Req) returns (Rep) {}\n}\nmessage Req { string name = 1; int32 n = 2; }\nmessage Rep { string message = 1; }\nenum Color { RED = 0; BLUE = 1; }\n'
+
+
+def _proto_run(tmp_path, old, new, extra=None, name="repo"):
+    r = make_repo(tmp_path, {**(extra or {}), **old}, new, name=name)
+    return run_checks(_cfg(r), ["proto"])
+
+
+def test_proto_real_route_guide_wire_breaks_and_removed_rpc_with_a_go_caller(tmp_path):
+    old = open(RG).read()
+    new = old.replace("int32 latitude = 1;", "int32 latitude = 3;").replace("int32 longitude = 2;", "string longitude = 2;")
+    new = "\n".join(ln for ln in new.split("\n") if "rpc ListFeatures" not in ln)
+    client = 'package main\nfunc run(client pb.RouteGuideClient) {\n\tstream, err := client.ListFeatures(ctx, rect)\n}\n'
+    server = 'package main\nfunc (s *routeGuideServer) ListFeatures(rect *pb.Rectangle, stream pb.RouteGuide_ListFeaturesServer) error { return nil }\n'
+    generated = 'package pb\nfunc (c *c) ListFeatures(ctx context.Context) {}\nconst x = "RouteGuide"\n'
+    rep = _proto_run(tmp_path, {"routeguide/route_guide.proto": old},
+                     {"routeguide/route_guide.proto": new},
+                     {"client/client.go": client, "server/server.go": server, "routeguide/route_guide_grpc.pb.go": generated})
+    ids = {f.rule_id: f for f in rep.findings}
+    assert ids["PRT101"].confidence.value == "confirmed" and [(e.file, e.line) for e in ids["PRT101"].evidence] == [("client/client.go", 3)]
+    w = ids["PRT111"]
+    assert w.confidence.value == "confirmed" and "latitude changed number 1 -> 3" in w.message and "longitude changed to an incompatible type" in w.message
+    assert rep.blocking()
+
+
+def test_proto_reserved_removals_are_fine_unreserved_are_risky_and_compatible_types_are_not_breaks(tmp_path):
+    new = (GREETER.replace("int32 n = 2;", "reserved 2; reserved \"n\";").replace("BLUE = 1;", "reserved 1;").replace("string name = 1;", "int64 name = 1;"))
+    rep = _proto_run(tmp_path, {"hello.proto": GREETER}, {"hello.proto": new})
+    msgs = " ".join(f.message for f in rep.findings if f.rule_id.startswith("PRT11"))
+    assert "removed without" not in msgs  # both removals reserved
+    assert "changed type string -> int64" in msgs.replace("TYPE_", "") or "incompatible" in msgs  # string -> int64 is a wire break
+    new2 = GREETER.replace("int32 n = 2;", "int64 n = 2;").replace("string message = 1;", "bytes message = 1;")
+    f2 = [f for f in _proto_run(tmp_path, {"hello.proto": GREETER}, {"hello.proto": new2}, name="r2").findings]
+    assert {f.rule_id for f in f2} == {"PRT112"} and not any(f.confidence.value == "confirmed" for f in f2)
+    new3 = GREETER.replace("int32 n = 2;", "")
+    f3 = _proto_run(tmp_path, {"hello.proto": GREETER}, {"hello.proto": new3}, name="r3").findings
+    assert [f.rule_id for f in f3] == ["PRT112"] and "removed without `reserved`" in f3[0].message
+
+
+def test_proto_enum_number_change_required_field_and_rpc_signature_are_wire_breaks(tmp_path):
+    p2 = 'syntax = "proto2";\npackage a;\nmessage M { optional string x = 1; }\nenum E { A = 0; B = 1; }\nservice S { rpc Do (M) returns (M); }\n'
+    new = p2.replace("optional string x = 1;", "optional string x = 1; required int32 y = 2;").replace("B = 1;", "B = 5;").replace("returns (M)", "returns (stream M)")
+    f = _proto_run(tmp_path, {"a.proto": p2}, {"a.proto": new}).findings
+    text = " ".join(x.message for x in f if x.rule_id == "PRT111")
+    assert "required field a.M.y" in text and "a.E.B changed number 1 -> 5" in text and "streaming changed" in text
+    assert all(x.confidence.value == "confirmed" for x in f if x.rule_id == "PRT111")
+
+
+def test_proto_ambiguous_method_names_and_full_method_paths(tmp_path):
+    two = GREETER + 'service Other { rpc SayHello (Req) returns (Rep) {} }\n'
+    new = two.replace("  rpc SayHello (Req) returns (Rep) {}\n", "", 1)
+    code = {"a.py": 'import hello_pb2_grpc\nGreeterStub(ch).SayHello(req)\nOtherStub(ch).SayHello(req)\n',
+            "b.sh": 'grpcurl localhost:50051 hello.Greeter/SayHello\n', "c.go": 'conn.Invoke(ctx, "/hello.Greeter/SayHello", in, out)\n'}
+    f = {x.rule_id: x for x in _proto_run(tmp_path, {"hello.proto": two}, {"hello.proto": new}, code).findings}
+    confirmed = {(e.file, e.line) for e in f["PRT101"].evidence}
+    assert ("c.go", 1) in confirmed  # the full /pkg.Service/Method path is unambiguous
+    assert ("a.py", 2) not in confirmed and "PRT103" in f  # Greeter.SayHello vs Other.SayHello cannot be told apart by name
+
+
+def test_proto_missing_imports_are_left_out_and_reported_broken_protos_are_unknown_and_unchanged_is_quiet(tmp_path):
+    needs = 'syntax = "proto3";\nimport "third_party/x.proto";\nmessage A { x.X v = 1; }\n'
+    ok = 'syntax = "proto3";\nmessage B { int32 a = 1; }\n'
+    r = make_repo(tmp_path, {"ok.proto": ok, "needs.proto": needs}, {"ok.proto": ok.replace("a = 1", "a = 2")})
+    rep = run_checks(_cfg(r), ["proto"])
+    assert any(f.rule_id == "PRT111" and "changed number" in f.message for f in rep.findings)
+    assert any("left out" in n and "needs.proto" in n for n in rep.coverage.notes)
+    r2 = make_repo(tmp_path, {"ok.proto": ok}, {"ok.proto": "syntax = \"proto3\";\nmessage B { int32 a = ; }\n"}, name="broken")
+    f2 = run_checks(_cfg(r2), ["proto"]).findings
+    assert [x.rule_id for x in f2] == ["PRT902"] and f2[0].confidence.value == "unknown"
+    r3 = make_repo(tmp_path, {"ok.proto": ok, "x.py": "a=1\n"}, {"x.py": "a=2\n"}, name="quiet")
+    assert run_checks(_cfg(r3), ["proto"]).findings == []
+
+
+def test_sci_cli_default_includes_proto(tmp_path, capsys):
+    r = make_repo(tmp_path, {"hello.proto": GREETER}, {"hello.proto": GREETER.replace("string name = 1;", "string name = 5;")})
+    assert sci_main(["--repo", r, "--base", "main", "--format", "json"]) == 1
+    assert "PRT111" in {f["rule_id"] for f in json.loads(capsys.readouterr().out)["findings"]}
+
+
+# ---------------------------------------------------------------- the demo pull request used on real runners
+
+def test_demo_pr_is_blocked_by_every_check_through_the_action(tmp_path, github):
+    sys_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("make_demo", os.path.join(sys_path, "make_demo.py"))
+    md = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(md)
+    ws = md.make(str(tmp_path / "demo"), shallow=True)
+    p, outputs, summary = run_action(ws, tmp_path, github, extra_env={"INPUT_CHECKS": "db,api,graphql,proto"})
+    assert p.returncode == 1, p.stdout + p.stderr
+    for rule in ("DCI101", "API101", "GQL101", "PRT101", "PRT111"):
+        assert f"title={rule}" in p.stdout or rule in summary.read_text(), rule
+    assert outputs["verdict"] == "fail" and int(outputs["blocking-count"]) >= 5

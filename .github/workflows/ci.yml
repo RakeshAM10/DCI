@@ -26,7 +26,7 @@ jobs:
           node-version: "22"
       - name: Install
         run: |
-          python -m pip install -e ".[dev]" sqlalchemy alembic pyyaml
+          python -m pip install -e ".[dev]" sqlalchemy alembic
           (cd tools/pgcheck && npm ci)
       - name: Test (ground truth runs against a real PostgreSQL engine)
         run: python -m pytest -q

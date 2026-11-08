@@ -40,6 +40,7 @@ class Config:
     runtime_blocks: bool = False  # treat runtime evidence as CONFIRMED (the operator vouches that the statistics are current)
     api_spec_globs: list[str] = field(default_factory=lambda: list(DEFAULT_API_SPEC_GLOBS))  # OpenAPI files whose changes are checked (SCI)
     graphql_schema_globs: list[str] = field(default_factory=lambda: list(DEFAULT_GRAPHQL_GLOBS))  # GraphQL SDL files (SCI)
+    proto_globs: list[str] = field(default_factory=lambda: ["**/*.proto"])  # Protocol Buffers files (SCI)
     api_access_logs: list[str] = field(default_factory=list)  # access-log exports (operator supplied, never from .dci.toml)
     workspace: str | None = None  # if set, the repo and every consumer repository must be inside it (enforced in analyze)
     config_consumer_repos: list[tuple[str, str]] = field(default_factory=list)  # consumer repos named by a .dci.toml (untrusted origin)
@@ -69,7 +70,7 @@ def load_text(raw: bytes | str, cfg: Config, base_dir: str, label: str = ".dci.t
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
         raise ConfigError(f"{path}: invalid TOML: {e}") from e
     d = data.get("dci", data)
-    for key, attr in (("migration_globs", "migration_globs"), ("test_globs", "test_globs"), ("ignore_paths", "ignore_paths"), ("ignore_rules", "ignore_rules"), ("api_spec_globs", "api_spec_globs"), ("graphql_schema_globs", "graphql_schema_globs")):
+    for key, attr in (("migration_globs", "migration_globs"), ("test_globs", "test_globs"), ("ignore_paths", "ignore_paths"), ("ignore_rules", "ignore_rules"), ("api_spec_globs", "api_spec_globs"), ("graphql_schema_globs", "graphql_schema_globs"), ("proto_globs", "proto_globs")):
         v = _list(d, key)
         if v is not None:
             setattr(cfg, attr, v)
