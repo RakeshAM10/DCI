@@ -227,11 +227,12 @@ def collect_models(module: ast.Module, file: str, text: str) -> tuple[list[Class
             tablename = schema = None
             tn_line = node.lineno
             cols: dict[str, ColDef] = {}
+            is_sqlmodel = any(k.arg == "table" and isinstance(k.value, ast.Constant) and k.value.value is True for k in node.keywords)
             for stmt in node.body:
                 target = value = None
                 if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
                     target, value = stmt.targets[0].id, stmt.value
-                elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name) and stmt.value is not None:
+                elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
                     target, value = stmt.target.id, stmt.value
                 if target is None:
                     continue
@@ -248,10 +249,21 @@ def collect_models(module: ast.Module, file: str, text: str) -> tuple[list[Class
                                 schema = _cstr(v)
                 elif isinstance(value, ast.Call) and _fname(value.func) in ("Column", "mapped_column"):
                     cols[target] = _coldef(target, value, file, lines)
+                elif is_sqlmodel or (isinstance(stmt, ast.AnnAssign) and any("SQLModel" in b for b in [b.id if isinstance(b, ast.Name) else b.attr for b in node.bases if isinstance(b, (ast.Name, ast.Attribute))])):
+                    has_default = False
+                    if isinstance(value, ast.Call):
+                        kws = {k.arg: k.value for k in value.keywords if k.arg}
+                        if "default" in kws or "default_factory" in kws:
+                            has_default = True
+                    i = stmt.lineno - 1
+                    snip = redact(lines[i]) if 0 <= i < len(lines) else ""
+                    cols[target] = ColDef(target, target, file, stmt.lineno, snip, has_default)
             bases = [b.id if isinstance(b, ast.Name) else b.attr for b in node.bases if isinstance(b, (ast.Name, ast.Attribute))]
             derived = False
             if tablename is None and cols and any(isinstance(b, ast.Attribute) and b.attr == "Model" for b in node.bases):
                 tablename, derived = _snake(node.name), True  # flask-sqlalchemy default naming
+            if tablename is None and is_sqlmodel:
+                tablename, derived = _snake(node.name), True
             if tablename is not None or cols:
                 classes.append(ClassInfo(node.name, file, node.lineno, bases, tablename, schema, cols, tn_line, derived))
         elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and _fname(node.value.func) == "Table":

@@ -179,3 +179,45 @@ def test_cli_internal_error_fails_closed(tmp_path, monkeypatch, capsys):
     monkeypatch.delenv("DCI_DEBUG", raising=False)
     assert cli.main(["analyze", "--repo", str(tmp_path)]) == 3
     assert "internal error" in capsys.readouterr().err
+
+
+def test_sqlmodel_and_pydantic_orm_support(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    mig = repo / "migrations"
+    mig.mkdir()
+    (mig / "001.sql").write_text("CREATE TABLE users (id int, email text);\n", encoding="utf-8")
+    app = repo / "app"
+    app.mkdir()
+    (app / "models.py").write_text("""from sqlmodel import SQLModel, Field
+
+class UserBase(SQLModel):
+    email: str = Field(unique=True)
+
+class User(UserBase, table=True):
+    id: int = Field(primary_key=True)
+""", encoding="utf-8")
+    (app / "crud.py").write_text("""from .models import User
+
+def get_by_email(email):
+    return User.email == email
+""", encoding="utf-8")
+
+    from helpers import git
+    git(repo, "init", "-b", "main")
+    git(repo, "config", "user.name", "Tester")
+    git(repo, "config", "user.email", "test@example.com")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-m", "init")
+
+    git(repo, "checkout", "-b", "feat")
+    (mig / "002.sql").write_text("ALTER TABLE user DROP COLUMN email;\n", encoding="utf-8")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-m", "drop email")
+
+    from dci.analyze import analyze
+    from dci.config import Config
+    cfg = Config(repo=str(repo), base="main")
+    rep = analyze(cfg)
+    assert any(f.rule_id == "DCI101" and "user.email" in f.message for f in rep.findings)
+    assert any("crud.py" in str(e.file) for f in rep.findings for e in f.evidence)
