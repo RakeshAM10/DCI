@@ -18,6 +18,8 @@ def ident_name(node) -> str:
     """Canonical name of an Identifier, or of a Table/Column/ColumnDef whose `this` is an Identifier."""
     if node is None:
         return ""
+    if isinstance(node, str):  # some sqlglot dialect paths yield a bare string for db/catalog
+        return node.lower()
     ident = node if isinstance(node, exp.Identifier) else node.args.get("this")
     if isinstance(ident, exp.Identifier):
         return ident.name if ident.args.get("quoted") else ident.name.lower()
@@ -26,7 +28,7 @@ def ident_name(node) -> str:
 
 def table_schema(tb: exp.Table) -> str | None:
     db = tb.args.get("db")
-    return ident_name(db) if db is not None else None
+    return (ident_name(db) or None) if db is not None else None
 
 
 def alias_key(tb: exp.Table) -> str:

@@ -1,0 +1,18 @@
+{
+ "redash-full:49fe2957:DCI104:migrations/versions/fd4fc850d7ea_.py:38": {
+  "label": "TP",
+  "why": "column moved into users.detail; base code still reads users.profile_image_url -> real rollout-window hazard"
+ },
+ "redash-full:4ec96caa:DCI104:migrations/versions/d7d747033183_encrypt_alert_destinations.py:59": {
+  "label": "TP",
+  "why": "options column removed; base code still maps it -> real rollout-window hazard"
+ },
+ "redash-full:a34269cc:DCI104:migrations/versions/98af61feea92_add_encrypted_options_to_data_sources.py:43": {
+  "label": "TP",
+  "why": "options column removed; base code still maps it -> real rollout-window hazard"
+ },
+ "mlflow-full:2acc4a95:DCI114:mlflow/store/db_migrations/versions/5d2d30f0abce_update_job_table.py:23": {
+  "label": "TP",
+  "why": "function_fullname renamed to job_name; base code queries SqlJob.function_fullname -> real rollout-window hazard"
+ }
+}

@@ -58,6 +58,7 @@ def pr_number_from_event() -> int | None:
 
 
 def upsert_comment(markdown: str, repo: str | None = None, pr: int | None = None, token: str | None = None, create: bool = True) -> str:
+    """Update the DCI comment, or create it. With create=False a missing comment is not created (returns 'skipped')."""
     token = token or os.environ.get("GITHUB_TOKEN")
     repo = repo or os.environ.get("GITHUB_REPOSITORY")
     pr = pr or pr_number_from_event()

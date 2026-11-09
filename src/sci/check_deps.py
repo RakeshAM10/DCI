@@ -18,6 +18,7 @@ from dci.models import Confidence, Coverage, Finding, Reference, Severity
 from dci.redact import redact
 from dci.sources import Matcher, Tree
 
+from . import syntax
 from .check_api import KEEP, _finish, _mk, _sorted, _trees
 
 MAX_MANIFEST_BYTES = 10_000_000
@@ -122,7 +123,58 @@ def _collect(tree: Tree, paths: list[str], cov: Coverage) -> dict[str, Deps]:
     return res
 
 
-def _importers(tree: Tree, wanted: dict[str, set[str]], ignore, test_match, cov: Coverage) -> dict[tuple[str, str], list[Reference]]:
+def _collect_each(tree: Tree, paths: list[str], cov: Coverage) -> dict[str, tuple[str, Deps]]:
+    """manifest path -> (ecosystem, dependencies declared by that one manifest)."""
+    res: dict[str, tuple[str, Deps]] = {}
+    for p in paths:
+        kind = _kind(p)
+        txt = tree.read(p) if kind else None
+        if txt is None:
+            continue
+        try:
+            res[p] = (_ECO[kind], _PARSERS[kind](txt))
+        except (ValueError, tomllib.TOMLDecodeError, RecursionError):
+            pass  # _collect already reported the unparseable manifest
+    return res
+
+
+def _under(path: str, d: str) -> bool:
+    return d == "" or path == d or path.startswith(d + "/")
+
+
+def _scoped_removals(old: dict[str, tuple[str, Deps]], new: dict[str, tuple[str, Deps]]) -> dict[tuple[str, str], list[str]]:
+    """(ecosystem, name) -> directories whose manifest dropped it and that no manifest at or above them (still) declares.
+    Imports resolve through the nearest manifest (npm walks up the tree, Python/Go projects are per directory), so a package removed from
+    one workspace is only broken for code under that workspace, and a package still declared by an ancestor or sibling file is not removed."""
+    out: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for mp, (eco, deps) in old.items():
+        d = os.path.dirname(mp)
+        for n in deps:
+            if n in new.get(mp, (eco, {}))[1]:
+                continue
+            if any(e == eco and n in dd and _under(d, os.path.dirname(np_)) for np_, (e, dd) in new.items()):
+                continue
+            if d not in out[(eco, n)]:
+                out[(eco, n)].append(d)
+    return out
+
+
+def _declared_dirs(new: dict[str, tuple[str, Deps]]) -> dict[tuple[str, str], list[str]]:
+    out: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for mp, (eco, deps) in new.items():
+        for n in deps:
+            out[(eco, n)].append(os.path.dirname(mp))
+    return out
+
+
+def _in_scope(path: str, key: tuple[str, str], scopes: dict, declared: dict) -> bool:
+    for d in scopes.get(key, ()):
+        if _under(path, d) and not any(_under(path, x) and _under(x, d) and x != d for x in declared.get(key, ())):
+            return True
+    return False
+
+
+def _importers(tree: Tree, wanted: dict[str, set[str]], ignore, test_match, cov: Coverage, scopes: dict | None = None, declared: dict | None = None) -> dict[tuple[str, str], list[Reference]]:
     found: dict[tuple[str, str], list[Reference]] = defaultdict(list)
     seen = 0
     for path, _ in tree.files():
@@ -134,6 +186,7 @@ def _importers(tree: Tree, wanted: dict[str, set[str]], ignore, test_match, cov:
         if text is None:
             continue
         seen += 1
+        text = syntax.blank_comments(path, text)
         is_test = test_match(path)
         for i, line in enumerate(text.split("\n"), 1):
             if len(line) > 2000:
@@ -149,7 +202,7 @@ def _importers(tree: Tree, wanted: dict[str, set[str]], ignore, test_match, cov:
                     path_s = m.group(1)
                     names = [w for w in wanted["go"] if path_s == w or path_s.startswith(w + "/")]
             for n in names:
-                if n in wanted[eco]:
+                if n in wanted[eco] and (scopes is None or _in_scope(path, (eco, n), scopes, declared or {})):
                     bucket = found[(eco, n)]
                     if len(bucket) < KEEP:
                         bucket.append(Reference(None, None, path, i, "head", "import", "ref", Confidence.CONFIRMED, redact(line.strip()), is_test=is_test, anchor=i))
@@ -173,9 +226,12 @@ def run(cfg: Config, cov: Coverage) -> list[Finding]:
         base_paths = [p for p, _ in base_tree.files() if _kind(p) and not ignore(p)]
         head_paths = [p for p, _ in head_tree.files() if _kind(p) and not ignore(p)]
         old, new = _collect(base_tree, base_paths, cov), _collect(head_tree, head_paths, cov)
-        removed: dict[str, set[str]] = {eco: set(old.get(eco, {})) - set(new.get(eco, {})) for eco in old}
-        removed = {k: v for k, v in removed.items() if v}
-        refs = _importers(head_tree, removed, ignore, test_match, cov) if removed else {}
+        old_each, new_each = _collect_each(base_tree, base_paths, cov), _collect_each(head_tree, head_paths, cov)
+        scopes = _scoped_removals(old_each, new_each)
+        removed: dict[str, set[str]] = defaultdict(set)
+        for (eco_, n_) in scopes:
+            removed[eco_].add(n_)
+        refs = _importers(head_tree, removed, ignore, test_match, cov, scopes, _declared_dirs(new_each)) if removed else {}
         where = touched[0]
         for eco, names in sorted(removed.items()):
             for n in sorted(names):

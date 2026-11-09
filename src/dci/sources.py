@@ -136,6 +136,33 @@ class GitTree(Tree):
                 continue
             self._entries[p] = (blob.decode(), int(size) if size.isdigit() else 0)
         self._proc: subprocess.Popen | None = None
+        self._prefetched = False
+
+    _FETCH_EXT = (".py", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".go", ".java", ".kt", ".rb", ".php", ".cs", ".rs", ".sql", ".json", ".yaml", ".yml",
+                  ".toml", ".proto", ".graphql", ".gql", ".txt", ".cfg", ".ini", ".env", ".sh", ".lock", ".mod", ".sum", ".xml", ".gradle", ".tf", ".md")
+
+    def _prefetch(self) -> None:
+        """Partial clone: download the source blobs this tree needs in a few batched requests instead of one network round trip per file read."""
+        self._prefetched = True
+        if self._sizes_known:
+            return
+        oids = sorted({b for p, (b, _) in self._entries.items() if p.lower().endswith(self._FETCH_EXT) or "/" not in p})
+        budget = [12]  # network round trips we are willing to spend on splitting failed batches
+
+        def fetch(batch: list[str]) -> None:
+            if not batch or budget[0] <= 0:
+                return
+            budget[0] -= 1
+            try:
+                gitutil.run_git(self.repo, "fetch", "-q", "--no-tags", "--no-write-fetch-head", "--filter=blob:none", "origin", *batch)
+            except gitutil.GitError:
+                if len(batch) > 1:  # one unfetchable object fails the whole request: split to isolate it
+                    mid = len(batch) // 2
+                    fetch(batch[:mid])
+                    fetch(batch[mid:])
+
+        for i in range(0, len(oids), 1000):
+            fetch(oids[i:i + 1000])
 
     def files(self) -> Iterator[tuple[str, int]]:
         for p, (_, size) in sorted(self._entries.items()):
@@ -153,6 +180,8 @@ class GitTree(Tree):
         ent = self._entries.get(path)
         if not ent or ent[1] > self.max_bytes:
             return None
+        if not self._prefetched:
+            self._prefetch()
         proc = self._ensure()
         assert proc.stdin and proc.stdout
         proc.stdin.write(ent[0].encode() + b"\n")

@@ -20,7 +20,7 @@ from dci.models import Confidence, Coverage, Finding, Reference, Severity
 from dci.redact import redact
 from dci.sources import FsTree, Matcher, Tree
 
-from . import callers
+from . import callers, syntax
 from .check_api import KEEP, _finish, _trees
 
 MAX_PROTO_BYTES = 5_000_000
@@ -291,6 +291,7 @@ def scan_rpc_callers(tree: Tree, tree_name: str, rpcs: list[tuple[str, str, str]
         total += size
         if not pre.search(text):
             continue
+        text = syntax.blank_comments(path, text)
         low = text.lower().replace("_", "")
         files += 1
         is_test = test_match(path)
@@ -354,6 +355,13 @@ def run(cfg: Config, cov: Coverage) -> list[Finding]:
         if ex1 or ex2:
             cov.notes.append(f"{len(set(ex1) | set(ex2))} .proto file(s) were left out because their imports are not in the repository: " + ", ".join(sorted(set(ex1) | set(ex2))[:5]))
         findings: list[Finding] = []
+        left_out = sorted(set(ex1) | set(ex2))
+        skipped = [p for p in changed_protos if p in left_out]
+        if skipped and not (e1 or e2 or old is None or new is None):
+            findings.append(Finding("PRT902", Severity.WARNING, Confidence.UNKNOWN, "Changed .proto files were not checked",
+                                    f"{len(skipped)} changed .proto file(s) import files that are not in the repository, so SCI could not compile them and did not "
+                                    f"evaluate their breaking changes: {', '.join(skipped[:5])}. Add the missing imports to the repository (or a consumer path) to enable the check.",
+                                    None, file=skipped[0], line=1))
         if e1 or e2 or old is None or new is None:
             findings.append(Finding("PRT902", Severity.WARNING, Confidence.UNKNOWN, "Protocol Buffers could not be checked",
                                     f"The .proto files were not compared: {e2 or e1}. Breaking changes in them were not evaluated.", None,
@@ -361,7 +369,7 @@ def run(cfg: Config, cov: Coverage) -> list[Finding]:
             return [f for f in findings if f.rule_id not in cfg.ignore_rules]
         changes = diff(old, new)
         if not changes:
-            return []
+            return [f for f in findings if f.rule_id not in cfg.ignore_rules]
         removed = [c for c in changes if c.rule == "PRT101"]
         rpcs = [(k[0], old.services.get(k[0], k[0].rsplit(".", 1)[-1]), k[1]) for k in (c.rpc for c in removed)]
         found: dict = {}

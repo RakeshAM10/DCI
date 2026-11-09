@@ -13,6 +13,8 @@ from dataclasses import dataclass
 
 from dci.models import Confidence, Coverage, Reference
 from dci.redact import redact
+
+from . import syntax
 from dci.sources import Matcher, Tree
 
 CODE_EXT = (".py", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".go", ".java", ".kt", ".kts", ".scala", ".rb", ".php", ".cs",
@@ -177,6 +179,7 @@ def scan_tree(tree: Tree, matchers: list[OpMatcher], tree_name: str, test_match:
         total += size or len(text)
         if "\0" in text[:1000] or (prefilter is not None and not prefilter.search(text)):
             continue
+        text = syntax.blank_comments(path, text)
         files += 1
         is_test = test_match(path)
         prev = ""

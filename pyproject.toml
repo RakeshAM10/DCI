@@ -12,11 +12,14 @@ license = { text = "Proprietary" }
 dependencies = ["sqlglot>=27,<32", "pyyaml>=6,<7", "graphql-core>=3.2,<3.3", "grpcio-tools>=1.60,<2"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pyyaml>=6"]
+dev = ["pytest>=8", "pyyaml>=6", "cryptography>=42"]
+server = ["cryptography>=42"]
 
 [project.scripts]
 dci = "dci.cli:main"
 sci = "sci.cli:main"
+sci-server = "sciserver.cli:main"
+sci-licence = "sciserver.licence:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

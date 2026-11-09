@@ -96,4 +96,5 @@ def normalize_params(sql: str) -> str:
     return sql
 
 
-SQL_START = re.compile(r"^\s*\(?\s*(select|insert\s+into|update|delete\s+from|with|merge\s+into)\b", re.I)
+# `\s*(?:\(\s*)?` instead of `\s*\(?\s*`: two adjacent \s* made a long run of whitespace quadratic (ReDoS)
+SQL_START = re.compile(r"^\s*(?:\(\s*)?(select|insert\s+into|update|delete\s+from|with|merge\s+into)\b", re.I)

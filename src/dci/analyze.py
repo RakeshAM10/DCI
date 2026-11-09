@@ -16,6 +16,35 @@ _SUPPRESS = re.compile(r"(?i)dci:\s*ignore(?:\[([A-Za-z0-9_,\s]+)\])?")
 _MIG_EXT = (".py", ".sql")
 
 
+def _net_recreated(changes: list[Change]) -> list[Change]:
+    """A column (or table) dropped and then added again later in the same migration still exists afterwards ("recreate as another type"):
+    code that uses it keeps working, so the drop is not a removal."""
+    adds_col = [(tkey(c.schema, c.table), c.column, c.line) for c in changes if c.kind == ChangeKind.ADD_COLUMN and c.column]
+    adds_tab = [(tkey(c.schema, c.table), c.line) for c in changes if c.kind == ChangeKind.CREATE_TABLE]
+    out = []
+    for c in changes:
+        if c.kind == ChangeKind.DROP_COLUMN and c.column and any(t == tkey(c.schema, c.table) and col == c.column and ln > c.line for t, col, ln in adds_col):
+            continue
+        if c.kind == ChangeKind.DROP_TABLE and any(t == tkey(c.schema, c.table) and ln > c.line for t, ln in adds_tab):
+            continue
+        out.append(c)
+    return out
+
+
+def _only_new(new: list, old: list, key) -> list:
+    """Multiset difference: operations present in the old version of an edited migration were not introduced by this change."""
+    from collections import Counter  # noqa: PLC0415
+    budget = Counter(key(x) for x in old)
+    out = []
+    for x in new:
+        k = key(x)
+        if budget[k] > 0:
+            budget[k] -= 1
+        else:
+            out.append(x)
+    return out
+
+
 def _inside(repo: str, path: str) -> str:
     full = os.path.realpath(path if os.path.isabs(path) else os.path.join(repo, path))
     if not (full == repo or full.startswith(repo + os.sep)):
@@ -38,6 +67,7 @@ def analyze(cfg: Config) -> Report:
         base_tree: Tree | None = None
         head_tree: Tree
         mig_paths: list[str] = []
+        modified: set[str] = set()  # existing migrations edited by the PR: only operations NEW in the edit count
 
         if cfg.base:
             if not is_git:
@@ -53,7 +83,9 @@ def analyze(cfg: Config) -> Report:
                     if status in ("A", "M") and path.endswith(_MIG_EXT) and migration_match(path) and not ignore_match(path):
                         mig_paths.append(path)
                         if status == "M":
-                            cov.notes.append(f"{path}: an existing migration was modified; applied migrations should be immutable")
+                            modified.add(path)
+                            cov.notes.append(f"{path}: an existing migration was modified; applied migrations should be immutable. "
+                                             "Only operations that are new in the edit are analysed.")
         else:
             head_tree = (GitTree(repo, gitutil.rev_sha(repo, cfg.head), "head", cfg.max_file_bytes) if (cfg.head and is_git)
                          else FsTree(repo, "head", cfg.max_file_bytes))
@@ -75,6 +107,13 @@ def analyze(cfg: Config) -> Report:
                 continue
             mig_text[p] = text
             ch, iss, cr = parse_migration(p, text)
+            if p in modified and base_tree is not None:
+                old_text = base_tree.read(p)
+                if old_text is not None:
+                    och, oiss, _ocr = parse_migration(p, old_text)
+                    ch = _only_new(ch, och, lambda c: (c.kind, c.schema, c.table, c.column, c.new_name, c.new_type, c.nullable, c.has_default, c.unique))
+                    iss = _only_new(iss, oiss, lambda i: (i.message, i.snippet))
+            ch = _net_recreated(ch)
             cov.migration_files.append(p)
             changes.extend(ch)
             issues.extend(iss)

@@ -27,7 +27,17 @@ Every finding is classified as `CONFIRMED`, `POSSIBLE`, or `UNKNOWN`. **Only con
 
 ---
 
-## Use It as a GitHub Action
+## Deployment Options
+
+SCI can be deployed in three ways:
+
+1. **GitHub Action (Recommended for single repos):** Gate PRs using `.github/workflows/sci.yml`.
+2. **Local CLI & Web Inspector:** Run `sci` and `sci ui` locally in your terminal or browser.
+3. **Hosted GitHub App (`sci-server`):** Self-hosted service for entire GitHub organizations with webhook automation, central dashboard, and zero per-repository workflow configuration.
+
+---
+
+## 1. Use It as a GitHub Action
 
 Add this workflow to your repository to gate all pull requests:
 
@@ -128,7 +138,7 @@ sci --repo . --base origin/main --format html --output report.html
 
 ---
 
-## Use It as a CLI
+## 2. Use It as a CLI
 
 Install locally or in your custom CI runner (Python 3.11+):
 
@@ -136,15 +146,16 @@ Install locally or in your custom CI runner (Python 3.11+):
 pip install .
 ```
 
-### Run All Checks (Database + API + GraphQL + gRPC)
+### Run All Checks (Database + API + GraphQL + gRPC + Dependencies + Config)
 ```bash
 # Compare your current working branch against main
 sci --repo . --base origin/main
 
 # Run specific checks only
-sci --repo . --base origin/main --checks db,api
+sci --repo . --base origin/main --checks db,api,graphql
 
-# Output JSON or SARIF for automated tooling
+# Output JSON, HTML, or SARIF for automated tooling
+sci --repo . --base origin/main --format html --output report.html
 sci --repo . --base origin/main --format json --output report.json
 sci --repo . --base origin/main --format sarif --output report.sarif
 ```
@@ -154,6 +165,35 @@ sci --repo . --base origin/main --format sarif --output report.sarif
 dci analyze --base origin/main
 dci analyze --migration migrations/002_drop_column.sql
 ```
+
+---
+
+## 3. Host It as a GitHub App Server (`sci-server`)
+
+For enterprise or multi-team environments, run SCI as a hosted service that listens to GitHub webhooks and gates pull requests across all installed repositories automatically.
+
+### Fast Docker Deployment
+```bash
+# 1. Configure deployment environment
+cp deploy/env.example deploy/.env
+# Put your GitHub App private key at deploy/github-app.pem
+
+# 2. Launch with Caddy HTTPS proxy and persistent volume
+docker compose -f deploy/docker-compose.yml up -d
+```
+
+* **Central Dashboard:** Web UI at `https://<domain>/` showing active scans, repository health, and run history.
+* **CLI Management:**
+  ```bash
+  # Manage repositories
+  sci-server repos list
+  sci-server repos enable acme/backend
+  sci-server repos set acme/backend --checks db,api,graphql,proto --fail-on error
+
+  # Online consistent backup
+  sci-server backup backup-$(date +%F).db
+  ```
+* See [docs/SERVER.md](file:///C:/Users/ra301/.gemini/antigravity/scratch/dci/docs/SERVER.md) for full server configuration, permissions, and licensing guides.
 
 ---
 
@@ -263,7 +303,7 @@ python tools/replay.py . --max 50 --checks graphql
 
 ## Development & Testing
 
-Run the full automated test suite (250+ tests across PostgreSQL ground truth, AST scale repos, OpenAPI, GraphQL, Protobuf, Dependencies, Configuration, and Worktree Simulation):
+Run the full automated test suite (300+ tests across PostgreSQL ground truth, AST scale repos, OpenAPI, GraphQL, Protobuf, Dependencies, Configuration, Self-Hosted Server, and Worktree Simulation):
 
 ```bash
 # Setup environment

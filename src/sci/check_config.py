@@ -17,6 +17,7 @@ from dci.models import Confidence, Coverage, Finding, Reference, Severity
 from dci.redact import redact
 from dci.sources import Matcher, Tree
 
+from . import syntax
 from .check_api import KEEP, _finish, _mk, _sorted, _trees
 
 _KEY = r"[A-Z][A-Z0-9_]{1,80}"
@@ -103,6 +104,7 @@ def _reads(tree: Tree, tree_name: str, ignore, test_match, cov: Coverage, keys: 
         if txt is None:
             continue
         n += 1
+        txt = syntax.blank_comments(path, txt)
         is_test = test_match(path)
         for i, line in enumerate(txt.split("\n"), 1):
             if len(line) > 2000 or "env" not in line.lower():

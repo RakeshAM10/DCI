@@ -20,7 +20,7 @@ from graphql import (GraphQLError, GraphQLSchema, TypeInfo, TypeInfoVisitor, Vis
                      find_dangerous_changes, get_named_type, parse, visit)
 from graphql.language import ast as gast
 
-from . import callers
+from . import callers, syntax
 from .check_api import KEEP, _finish, _read_spec, _trees
 from .oas import MAX_SPEC_BYTES
 
@@ -211,6 +211,7 @@ def collect_usage(tree: Tree, tree_name: str, schema: GraphQLSchema, names: set[
         total += size
         if pre is not None and not pre.search(text):
             continue
+        text = syntax.blank_comments(path, text)
         files += 1
         is_test = test_match(path)
         for off, doc_text in _candidates(path, text):

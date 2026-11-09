@@ -3,6 +3,7 @@ SQL files and op.execute() strings are parsed with SQLGlot (PostgreSQL dialect).
 from __future__ import annotations
 
 import ast
+import warnings
 import re
 
 import sqlglot
@@ -264,7 +265,9 @@ def _column_info(node) -> tuple[str | None, str | None, bool, bool]:
 def parse_alembic(rel: str, text: str) -> tuple[list[Change], list[ParseIssue], set[tuple[str, str]], bool]:
     """Returns (changes, issues, tables_created_in_file, is_alembic)."""
     try:
-        tree = ast.parse(text)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            tree = ast.parse(text)
     except (SyntaxError, ValueError, RecursionError) as e:
         return [], [ParseIssue(rel, getattr(e, "lineno", 1) or 1, f"Python syntax error: {e.__class__.__name__}")], set(), False
     up = _is_alembic(tree)

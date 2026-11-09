@@ -5,3 +5,4 @@ graphql-core==3.2.14
 grpcio-tools==1.85.1
 protobuf==7.36.1
 grpcio==1.85.1
+cryptography==50.0.1

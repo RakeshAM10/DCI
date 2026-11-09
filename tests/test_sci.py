@@ -789,3 +789,17 @@ def test_sci_ui_rejects_a_file_that_is_not_a_report(tmp_path, capsys):
     bad.write_text('{"hello": 1}')
     assert sci_cli.main(["ui", str(bad), "--no-open"]) == 2
     assert "not an SCI report" in capsys.readouterr().err
+
+
+def test_changed_proto_with_missing_imports_is_an_explicit_unknown_not_a_silent_pass(tmp_path):
+    # Found by mutating etcd's real protos: rpc.proto imports files outside the repo, so it cannot compile; the PR used to show "PASS".
+    from dci.config import Config
+    from sci.run import run_checks
+    base = 'syntax = "proto3";\nimport "third_party/other.proto";\nmessage M { string a = 1; }\n'
+    r = make_repo(tmp_path, {"m.proto": base}, {"m.proto": base.replace("a = 1", "a = 7")})
+    cfg = Config(repo=r)
+    cfg.base, cfg.head = "HEAD~1", "HEAD"
+    rep = run_checks(cfg, ["proto"])
+    f = [x for x in rep.findings if x.rule_id == "PRT902"]
+    assert f and f[0].confidence.value == "unknown" and f[0].file == "m.proto"
+    assert not rep.blocking()

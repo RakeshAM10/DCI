@@ -6,7 +6,12 @@ is parsed with SQLGlot. Anything that cannot be resolved to a concrete table/col
 from __future__ import annotations
 
 import ast
+import warnings
+import multiprocessing
+import os
 import re
+import time
+from collections import deque
 from dataclasses import dataclass, field
 
 import sqlglot
@@ -32,7 +37,18 @@ _PCT_FMT = re.compile(r"%(?:\([^)]*\))?[-+# 0]*\d*(?:\.\d+)?[sdrifx]")
 DYN_TABLE = "*dyn_table*"
 DYN_COLS = "*dyn_cols*"
 _DYN_TABLE = re.compile(r"(?i)\b(?:from|join|into|update|table)\s+\{[^{}]*\}")
-_SELECT_LIST = re.compile(r"(?is)\bselect\s+(.*?)\s+\bfrom\b")
+_SELECT_KW = re.compile(r"(?i)\bselect\b")
+_FROM_KW = re.compile(r"(?i)\bfrom\b")
+
+
+def _select_list_is_dynamic(text: str) -> bool:
+    """True if a `{}` placeholder sits between SELECT and the first FROM (linear time; no backtracking on long whitespace)."""
+    m = _SELECT_KW.search(text)
+    if not m:
+        return False
+    rest = text[m.end(): m.end() + 4000]
+    f = _FROM_KW.search(rest)
+    return "{" in (rest[: f.start()] if f else rest)
 
 
 def _fname(func) -> str:
@@ -99,7 +115,7 @@ class AliasDef:
 
 
 # module-level `Alias = Orig` / `Alias = pkg.mod.Orig` (text pre-filter; confirmed with the AST before use)
-_ASSIGN_ALIAS = re.compile(r"(?m)^(\w+)[ \t]*(?::[^=\r\n]+)?=[ \t]*(?:\w+\.)*(\w+)[ \t]*(?:#[^\r\n]*)?\r?$")
+_ASSIGN_ALIAS = re.compile(r"(?m)^(\w+)[ \t]*(?::[^=\n]+)?=[ \t]*(?:\w+\.)*(\w+)[ \t]*(?:#[^\n]*)?$")
 
 
 def assign_aliases(module: ast.Module) -> list[tuple[str, AliasDef]]:
@@ -280,7 +296,6 @@ def collect_models(module: ast.Module, file: str, text: str) -> tuple[list[Class
                 meta = call.args[1].id if len(call.args) > 1 and isinstance(call.args[1], ast.Name) else None
                 tvars.append(TableVar(node.targets[0].id, tname, file, node.lineno, cols, _cstr(kws.get("schema")), meta))
     return classes, tvars
-
 
 class Registry:
     def __init__(self) -> None:
@@ -497,12 +512,19 @@ def sql_references(sql: str, file: str, line: int, tree_name: str, via: str, is_
 def _refs_from_tree(t, file, base_line, tree_name, via, is_test, stmt, anchor) -> list[Reference]:
     out: list[Reference] = []
     stmt_lines = stmt.splitlines() or [stmt]
-    whole = redact(" ".join(stmt.split()))
+    whole = redact(" ".join(stmt[:20_000].split()))
+    snippets: dict[int, str] = {}  # one redacted snippet per source line, not one per reference (a one-line statement with
+    #                                thousands of references would otherwise cost O(n^2))
 
     def mk(table, column, role, conf, node=None, schema=None, **kw) -> Reference:
         ln = node_line(node, base_line) if node is not None else base_line
         idx = ln - base_line
-        snippet = redact(" ".join(stmt_lines[idx].split())) if 0 <= idx < len(stmt_lines) and stmt_lines[idx].strip() else whole
+        if 0 <= idx < len(stmt_lines) and stmt_lines[idx].strip():
+            snippet = snippets.get(idx)
+            if snippet is None:
+                snippet = snippets[idx] = redact(" ".join(stmt_lines[idx][:20_000].split()))
+        else:
+            snippet = whole
         return Reference(table, column, file, ln, tree_name, via, role, conf, snippet, is_test=is_test, schema=schema, anchor=anchor, **kw)
 
     cte_names = _cte_names(t)
@@ -590,19 +612,27 @@ class ScanResult:
     registry: Registry = field(default_factory=Registry)
 
 
+_POOL_CTX: dict = {}  # filled in the parent just before forking; workers read it (copy-on-write, never pickled)
+
+
+def _pool_job(path: str):
+    c = _POOL_CTX
+    local = Coverage()
+    refs = c["sc"]._scan_py_file(c["tree"], path, c["reg"], c["terms"], c["alias_rx"], local)
+    return refs, local.python_files_parsed, local.python_files_skipped_by_filter, (local.python_files_failed[0] if local.python_files_failed else "")
+
+
 class Scanner:
     def __init__(self, targets: dict[tuple[str, str], set[str]] | None, migration_match: Matcher, ignore_match: Matcher,
-                 test_match: Matcher, coverage: Coverage, max_bytes: int,
-                 workers: int = 0, time_budget_seconds: float = 900.0, max_total_bytes: int = 1_000_000_000,
-                 parallel_min_files: int = 400):
+                 test_match: Matcher, coverage: Coverage, max_bytes: int, workers: int = 0, time_budget: float = 0.0,
+                 max_total_bytes: int = 0, parallel_min_files: int = 400):
         """`targets` maps (schema, table) -> changed column names, all in canonical (PostgreSQL-folded) spelling."""
         self.targets = {k: set(v) for k, v in targets.items()} if targets is not None else None
         self.migration_match, self.ignore_match, self.test_match = migration_match, ignore_match, test_match
         self.cov, self.max_bytes = coverage, max_bytes
-        self.workers = workers
-        self.time_budget_seconds = time_budget_seconds
-        self.max_total_bytes = max_total_bytes
-        self.parallel_min_files = parallel_min_files
+        self.workers = workers if workers > 0 else min(os.cpu_count() or 1, 8)
+        self.deadline = time.monotonic() + time_budget if time_budget and time_budget > 0 else None
+        self.max_total_bytes, self.parallel_min_files = max_total_bytes, parallel_min_files
         self.target_cols = {c for v in self.targets.values() for c in v} if self.targets is not None else None
         # lower-case words used only by the cheap text prefilter and by dynamic-SQL matching (both case-insensitive)
         self._words = ({t.lower() for _s, t in self.targets} | {c.lower() for c in self.target_cols}) if self.targets is not None else None
@@ -624,6 +654,7 @@ class Scanner:
         self.cov.trees_scanned.append(tree.name)
         py_files: list[str] = []
         sql_files: list[str] = []
+        total = 0
         for path, size in tree.files():
             if self.migration_match(path) or self.ignore_match(path):
                 continue
@@ -633,6 +664,11 @@ class Scanner:
             if size > self.max_bytes:
                 self.cov.files_skipped_too_large.append(f"{tree.name}:{path}")
                 continue
+            if ext in (".py", ".sql"):
+                if self.max_total_bytes and total + size > self.max_total_bytes:
+                    self._incomplete(1, f"{tree.name}: the {self.max_total_bytes // 1_000_000} MB source budget was reached")
+                    continue
+                total += size
             if ext == ".py":
                 py_files.append(path)
             elif ext == ".sql":
@@ -642,7 +678,10 @@ class Scanner:
 
         meta_dynamic = False
         # pass 1: models, Core tables and `from x import Y as Z` aliases (so a re-exported alias is still recognised)
-        for path in py_files:
+        for n, path in enumerate(py_files):
+            if self._expired():
+                self._incomplete(len(py_files) - n, f"{tree.name}: the time budget was reached while reading models")
+                break
             text = tree.read(path)
             if text is None:
                 continue
@@ -703,24 +742,13 @@ class Scanner:
 
         self._emit_definitions(reg, res, tree.name)
 
-        # pass 2: references
-        for path in py_files:
-            text = tree.read(path)
-            if text is None:
-                continue
-            if terms is not None:
-                low = text.lower()
-                if not (any(t in low for t in terms) or (alias_rx is not None and alias_rx.search(text))):
-                    self.cov.python_files_skipped_by_filter += 1
-                    continue
-            mod = self._parse(path, text, tree.name)
-            if mod is None:
-                continue
-            self.cov.python_files_parsed += 1
-            is_test = self.test_match(path)
-            _FileScan(self, reg, res, path, text, tree.name, is_test).run(mod)
+        # pass 2: references (in parallel for large trees; results are merged in file order, so the output never depends on timing)
+        self._pass2(tree, py_files, reg, terms, alias_rx, res)
 
-        for path in sql_files:
+        for n, path in enumerate(sql_files):
+            if self._expired():
+                self._incomplete(len(sql_files) - n, f"{tree.name}: the time budget was reached while reading SQL files")
+                break
             text = tree.read(path)
             if text is None:
                 continue
@@ -735,6 +763,64 @@ class Scanner:
                     res.refs.append(r)
         res.refs = _dedupe(res.refs)
         return res
+
+    # budgets and parallel scanning -------------------------------------------
+    def _expired(self) -> bool:
+        return self.deadline is not None and time.monotonic() > self.deadline
+
+    def _incomplete(self, n_files: int, why: str) -> None:
+        self.cov.scan_incomplete = True
+        self.cov.files_not_scanned += n_files
+        note = f"Scan stopped early: {why}. Files not scanned are unknown, not safe."
+        if note not in self.cov.notes:
+            self.cov.notes.append(note)
+
+    def _scan_py_file(self, tree: Tree, path: str, reg: Registry, terms, alias_rx, cov: Coverage) -> list[Reference]:
+        text = tree.read(path)
+        if text is None:
+            return []
+        if terms is not None:
+            low = text.lower()
+            if not (any(t in low for t in terms) or (alias_rx is not None and alias_rx.search(text))):
+                cov.python_files_skipped_by_filter += 1
+                return []
+        mod = self._parse(path, text, tree.name, cov)
+        if mod is None:
+            return []
+        cov.python_files_parsed += 1
+        sub = ScanResult()
+        _FileScan(self, reg, sub, path, text, tree.name, self.test_match(path)).run(mod)
+        return sub.refs
+
+    def _pass2(self, tree: Tree, py_files: list[str], reg: Registry, terms, alias_rx, res: ScanResult) -> None:
+        use_pool = (self.workers > 1 and tree.parallel_safe and len(py_files) >= self.parallel_min_files
+                    and "fork" in multiprocessing.get_all_start_methods())
+        if not use_pool:
+            for n, path in enumerate(py_files):
+                if self._expired():
+                    self._incomplete(len(py_files) - n, f"{tree.name}: the time budget was reached while reading code")
+                    return
+                res.refs.extend(self._scan_py_file(tree, path, reg, terms, alias_rx, self.cov))
+            return
+        _POOL_CTX.update(sc=self, tree=tree, reg=reg, terms=terms, alias_rx=alias_rx)
+        pool = multiprocessing.get_context("fork").Pool(self.workers)
+        try:
+            done = 0
+            for refs, parsed, skipped, failed in pool.imap(_pool_job, py_files, chunksize=32):
+                res.refs.extend(refs)
+                self.cov.python_files_parsed += parsed
+                self.cov.python_files_skipped_by_filter += skipped
+                if failed:
+                    self.cov.python_files_failed.append(failed)
+                done += 1
+                if self._expired() and done < len(py_files):
+                    self._incomplete(len(py_files) - done, f"{tree.name}: the time budget was reached while reading code")
+                    pool.terminate()
+                    break
+        finally:
+            pool.close() if not self._expired() else pool.terminate()
+            pool.join()
+            _POOL_CTX.clear()
 
     def _terms(self, reg: Registry) -> tuple[set[str] | None, re.Pattern[str] | None]:
         """Relevance prefilter for Python files: lower-case words (substring match on lower-cased text) plus a word-boundary
@@ -760,11 +846,13 @@ class Scanner:
         rx = re.compile(r"\b(?:" + "|".join(re.escape(a) for a in sorted(aliases)) + r")\b") if aliases else None
         return {t for t in terms if t}, rx
 
-    def _parse(self, path: str, text: str, tree_name: str) -> ast.Module | None:
+    def _parse(self, path: str, text: str, tree_name: str, cov: Coverage | None = None) -> ast.Module | None:
         try:
-            return ast.parse(text)
+            with warnings.catch_warnings():  # the scanned code's own SyntaxWarnings (invalid escapes...) are not ours to print
+                warnings.simplefilter("ignore")
+                return ast.parse(text)
         except (SyntaxError, ValueError, RecursionError, MemoryError):
-            self.cov.python_files_failed.append(f"{tree_name}:{path}")
+            (cov or self.cov).python_files_failed.append(f"{tree_name}:{path}")
             return None
 
     def _emit_definitions(self, reg: Registry, res: ScanResult, tree_name: str) -> None:
@@ -825,13 +913,20 @@ class _FileScan:
             self.res.refs.append(r)
 
     def run(self, mod: ast.Module) -> None:
-        for node in ast.walk(mod):
-            for ch in ast.iter_child_nodes(node):
+        # ONE breadth-first traversal (same order as ast.walk, so results are unchanged): parents, imports and the visit order
+        order: list[ast.AST] = []
+        todo = deque([mod])
+        while todo:
+            node = todo.popleft()
+            order.append(node)
+            children = list(ast.iter_child_nodes(node))
+            for ch in children:
                 self.parents[ch] = node
+            todo.extend(children)
             if isinstance(node, ast.ImportFrom):
                 for a in node.names:
                     self.imports[a.asname or a.name] = (a.name, node.module or "", node.level)
-        for node in ast.walk(mod):
+        for node in order:
             try:
                 self.visit(node)
             except RecursionError:
@@ -1027,8 +1122,7 @@ class _FileScan:
         if dynamic:
             if _DYN_TABLE.search(text):
                 marks.add(DYN_TABLE)  # the table name itself is built at run time
-            sel = _SELECT_LIST.search(text)
-            if sel and "{" in sel.group(1):
+            if _select_list_is_dynamic(text):
                 marks.add(DYN_COLS)  # the column list is built at run time
             text = re.sub(r"\{[^{}]*\}", "NULL", text)
         refs, ok = sql_references(text, self.path, getattr(node, "lineno", 1), self.tree_name, "raw_sql", self.is_test)

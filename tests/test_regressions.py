@@ -511,3 +511,73 @@ def test_dynamic_column_list_on_changed_table_is_possible(tmp_path):
 def test_dynamic_sql_about_other_tables_is_not_reported(tmp_path):
     write_files(str(tmp_path), {"app/q.py": "def f(s, t):\n    return s.execute('SELECT name FROM {}'.format(t))\n", "m.sql": DROP_COL})
     assert not evidence(analyze(Config(repo=str(tmp_path), migrations=["m.sql"])), "DCI103")
+
+
+def test_action_caps_annotations_to_what_github_displays(tmp_path):
+    """GitHub shows at most 10 error and 10 warning annotations per step; the runner must prioritise and say what was omitted."""
+    from test_action import make_origin, run_action
+    cols = [f"c{i}" for i in range(12)]
+    models = ("from sqlalchemy import Column, Integer\nfrom sqlalchemy.orm import declarative_base\nBase = declarative_base()\n\n\n"
+              "class Order(Base):\n    __tablename__ = 'orders'\n    id = Column(Integer, primary_key=True)\n"
+              + "".join(f"    {c} = Column(Integer)\n" for c in cols))
+    repo = "def f(s):\n    return s.execute('SELECT " + ", ".join(cols) + " FROM orders')\n"
+    mig = "from alembic import op\n\n\ndef upgrade():\n" + "".join(f"    op.drop_column('orders', '{c}')\n" for c in cols)
+    ws = make_origin(tmp_path, {"svc/alembic/versions/0002_drop.py": mig}, base_files={"svc/models.py": models, "svc/repo.py": repo})
+    p, outputs, _s = run_action(ws, tmp_path, extra_env={"INPUT_FAIL_ON": ""})
+    errors = [ln for ln in p.stdout.splitlines() if ln.startswith("::error file=")]
+    assert p.returncode == 1 and outputs["blocking-count"] == "12"
+    assert len(errors) == 10
+    assert "::notice title=DCI::" in p.stdout and "more finding(s)" in p.stdout
+
+
+from test_action import github  # noqa: E402,F401  (pytest fixture: a local TLS server that stands in for api.github.com)
+
+
+def test_pr_without_schema_changes_gets_no_new_comment_but_existing_one_is_updated(tmp_path, github):
+    from test_action import FakeGitHub, make_origin, run_action
+    ws = make_origin(tmp_path, {"svc/readme.txt": "docs only\n"})
+    p, outputs, _s = run_action(ws, tmp_path, github)
+    assert p.returncode == 0 and outputs["verdict"] == "pass"
+    assert FakeGitHub.comments == [], "a PR DCI has nothing to say about must not get a comment"
+    FakeGitHub.comments.append({"id": 1, "body": "<!-- dci-report -->\nold result"})
+    p, _o, _s = run_action(ws, tmp_path, github)
+    assert p.returncode == 0 and len(FakeGitHub.comments) == 1 and "old result" not in FakeGitHub.comments[0]["body"]
+
+
+def test_editing_an_old_migration_does_not_re_report_its_old_drops(tmp_path):
+    """Found by replaying redash history: a PR that only changed an import in an applied migration was blocked for a drop made years earlier."""
+    import os, subprocess
+    from dci.analyze import analyze
+    from dci.config import Config
+    r = str(tmp_path / "r")
+    os.makedirs(r + "/migrations/versions"); os.makedirs(r + "/app")
+    mig = "from alembic import op\n\ndef upgrade():\n    op.drop_column('orders', 'legacy')\n"
+    open(r + "/migrations/versions/001_x.py", "w").write(mig)
+    open(r + "/app/m.py", "w").write("from sqlalchemy import Column, String\nfrom sqlalchemy.orm import declarative_base\nBase = declarative_base()\nclass Order(Base):\n    __tablename__ = 'orders'\n    legacy = Column(String)\n    other = Column(String)\n")
+    g = lambda *a: subprocess.run(["git", "-C", r, *a], check=True, capture_output=True)  # noqa: E731
+    g("init", "-q", "-b", "main"); g("config", "user.email", "a@b"); g("config", "user.name", "t"); g("add", "-A"); g("commit", "-qm", "base")
+    g("checkout", "-qb", "feat")
+    open(r + "/migrations/versions/001_x.py", "w").write("import sqlalchemy as sa\n" + mig)  # edit unrelated to the drop
+    g("add", "-A"); g("commit", "-qm", "tidy")
+    cfg = Config(repo=r); cfg.base, cfg.head = "main", "feat"
+    rep = analyze(cfg)
+    assert not rep.blocking() and not rep.changes
+    # but a NEW drop added inside an edited migration is still caught
+    open(r + "/migrations/versions/001_x.py", "w").write(mig + "    op.drop_column('orders', 'other')\n")
+    open(r + "/app/use.py", "w").write("from app.m import Order\nvalue = Order.other\n")
+    g("add", "-A"); g("commit", "-qm", "more")
+    rep2 = analyze(cfg)
+    assert [c.column for c in rep2.changes] == ["other"] and rep2.blocking()
+
+
+def test_column_dropped_and_added_again_in_one_migration_is_not_a_removal(tmp_path):
+    """Found by replaying redash history: 'recreate the column as another type' (drop then add) was reported as a dropped column."""
+    from dci.migrations import parse_migration
+    from dci.analyze import _net_recreated
+    mig = ("from alembic import op\nimport sqlalchemy as sa\n\ndef upgrade():\n"
+           "    op.drop_column('queries', 'schedule')\n    op.add_column('queries', sa.Column('schedule', sa.JSON()))\n"
+           "    op.drop_column('queries', 'old')\n    op.drop_table('t')\n    op.create_table('t', sa.Column('id', sa.Integer()))\n")
+    ch, _iss, _cr = parse_migration("migrations/versions/1.py", mig)
+    kinds = [(c.kind.value, c.column or c.table) for c in _net_recreated(ch)]
+    assert ("drop_column", "schedule") not in kinds and ("drop_table", "t") not in kinds
+    assert ("drop_column", "old") in kinds and ("add_column", "schedule") in kinds

@@ -66,3 +66,20 @@ def test_broken_manifest_is_reported_not_crashed(tmp_path):
 def test_no_manifest_change_is_quiet(tmp_path):
     r = make_repo(tmp_path, {"a.py": "x=1\n"}, {"a.py": "x=2\n"})
     assert _run(r).findings == []
+
+
+def test_monorepo_removal_is_scoped_to_the_workspace_that_dropped_it(tmp_path):
+    # Found by mutating redash's real package.json: the union-of-all-manifests rule hid a break in client/ because viz-lib/ declares the same package.
+    pkg = lambda d: json.dumps({"name": "x", "dependencies": d}, indent=1)  # noqa: E731
+    files = {"package.json": pkg({"axios": "1.0.0"}), "viz-lib/package.json": pkg({"axios": "1.0.0"}),
+             "client/a.js": "import axios from 'axios';\n", "viz-lib/b.js": "import axios from 'axios';\n"}
+    r = make_repo(tmp_path, files, {"package.json": pkg({})})
+    f = _ids(_run(r))["DEP101"]
+    assert [e.file for e in f.evidence] == ["client/a.js"]  # viz-lib/b.js is served by viz-lib's own manifest
+
+
+def test_package_still_declared_by_an_ancestor_manifest_is_not_removed(tmp_path):
+    pkg = lambda d: json.dumps({"name": "x", "dependencies": d}, indent=1)  # noqa: E731
+    files = {"package.json": pkg({"axios": "1.0.0"}), "app/package.json": pkg({"axios": "1.0.0"}), "app/a.js": "import axios from 'axios';\n"}
+    r = make_repo(tmp_path, files, {"app/package.json": pkg({})})
+    assert "DEP101" not in _ids(_run(r))
